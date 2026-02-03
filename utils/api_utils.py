@@ -1,7 +1,5 @@
 # utils/api_utils.py
 
-from __future__ import annotations
-
 import os
 import json
 import time
@@ -24,51 +22,43 @@ def set_api_key(api_json: str) -> None:
 
 
 class OpenAIAPI:
-
     def __init__(self):
         self.client = OpenAI()
 
-    # 이미지 파일 업로드 하는거라고 함
-    def upload_image_for_vision(self, image_path: str | Path) -> str:
+    # ---------- Files ----------
+    def upload_image(self, image_path: str | Path) -> str:
+        """
+        이미지 파일 업로드 후 file_id 반환 (purpose="vision")
+        """
         image_path = Path(image_path)
-        if not image_path.exists():
-            raise FileNotFoundError(f"image not found: {image_path}")
 
         with image_path.open("rb") as f:
             uploaded = self.client.files.create(file=f, purpose="vision")
 
         return uploaded.id
 
-    def upload_batch_input_jsonl(self, jsonl_path: str | Path) -> str:
+    def upload_batch_jsonl(self, jsonl_path: str | Path) -> str:
         """
-        배치 입력 .jsonl 파일을 업로드하고 input_file_id(file_...)를 반환합니다.
-        purpose="batch" 사용. :contentReference[oaicite:2]{index=2}
+        배치 입력 .jsonl 업로드 후 input_file_id 반환 (purpose="batch")
         """
         jsonl_path = Path(jsonl_path)
-        if not jsonl_path.exists():
-            raise FileNotFoundError(f"jsonl not found: {jsonl_path}")
-        if jsonl_path.suffix.lower() != ".jsonl":
-            raise ValueError(f"batch input must be .jsonl: {jsonl_path}")
 
         with jsonl_path.open("rb") as f:
             uploaded = self.client.files.create(file=f, purpose="batch")
 
         return uploaded.id
 
-    def download_file_bytes(self, file_id: str) -> bytes:
+    def download_bytes(self, file_id: str) -> bytes:
         """
-        Files API content 다운로드(바이너리).
-        문서 예시: client.files.content(file_id).read() :contentReference[oaicite:3]{index=3}
+        Files API content 다운로드(바이너리)
         """
         resp = self.client.files.content(file_id)
         return resp.read()
 
-    def download_file_text(self, file_id: str, encoding: str = "utf-8") -> str:
-        return self.download_file_bytes(file_id).decode(encoding, errors="replace")
+    def download_text(self, file_id: str, encoding: str = "utf-8") -> str:
+        return self.download_bytes(file_id).decode(encoding, errors="replace")
 
-    # -------------------------
-    # Batch API
-    # -------------------------
+    # ---------- Batch ----------
     def create_batch(
         self,
         input_file_id: str,
@@ -76,18 +66,6 @@ class OpenAIAPI:
         completion_window: str = "24h",
         metadata: dict[str, Any] | None = None,
     ):
-        """
-        배치 생성.
-        endpoint는 문서에 나온 지원 목록 중 하나여야 합니다. :contentReference[oaicite:4]{index=4}
-        """
-        if endpoint not in {
-            "/v1/responses",
-            "/v1/chat/completions",
-            "/v1/embeddings",
-            "/v1/completions",
-            "/v1/moderations",
-        }:
-            raise ValueError(f"unsupported endpoint for batch: {endpoint}")
 
         return self.client.batches.create(
             input_file_id=input_file_id,
@@ -99,13 +77,9 @@ class OpenAIAPI:
     def retrieve_batch(self, batch_id: str):
         return self.client.batches.retrieve(batch_id)
 
-    def wait_batch(
-        self,
-        batch_id: str,
-        poll_sec: float = 5.0,
-    ):
+    def wait_batch(self, batch_id: str, poll_sec: float = 5.0):
         """
-        배치가 완료/실패/만료/취소 상태가 될 때까지 폴링합니다.
+        배치가 완료/실패/만료/취소 상태가 될 때까지 폴링
         """
         terminal = {"completed", "failed", "expired", "cancelled"}
 
@@ -116,14 +90,9 @@ class OpenAIAPI:
                 return b
             time.sleep(poll_sec)
 
-    # -------------------------
-    # JSONL helpers
-    # -------------------------
+    # ---------- JSONL ----------
     @staticmethod
     def write_jsonl(lines: Iterable[dict[str, Any]], out_path: str | Path) -> Path:
-        """
-        dict 라인들을 .jsonl로 저장합니다.
-        """
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -135,9 +104,6 @@ class OpenAIAPI:
 
     @staticmethod
     def parse_jsonl(text: str) -> list[dict[str, Any]]:
-        """
-        output/error jsonl 텍스트를 라인별 JSON으로 파싱합니다.
-        """
         out: list[dict[str, Any]] = []
         for line in text.splitlines():
             line = line.strip()
@@ -146,11 +112,9 @@ class OpenAIAPI:
             out.append(json.loads(line))
         return out
 
-    # -------------------------
-    # Batch request line builders
-    # -------------------------
+    # ---------- Batch line builder ----------
     @staticmethod
-    def build_responses_batch_line(
+    def build_responses_line(
         custom_id: str,
         model: str,
         prompt_text: str,
@@ -160,8 +124,7 @@ class OpenAIAPI:
         extra_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Batch 입력 jsonl의 1줄(요청 1개)을 /v1/responses 용으로 구성합니다.
-        body는 Responses API 파라미터와 동일 구조를 사용합니다. :contentReference[oaicite:5]{index=5}
+        Batch 입력 jsonl의 1줄(요청 1개)을 /v1/responses 용으로 구성
         """
         body: dict[str, Any] = {
             "model": model,
@@ -182,7 +145,6 @@ class OpenAIAPI:
         }
 
         if extra_body:
-            # 예: {"temperature": 0, "response_format": {...}} 등을 추가로 주입
             body.update(extra_body)
 
         return {

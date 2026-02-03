@@ -1,27 +1,28 @@
 # core/made.py
+
 from pathlib import Path
 from core.agent import Agent
 
 
 class MADE(Agent):
-    def process_file(self, split: str, path: Path) -> dict:
-        # 1) 프롬프트 로딩(이 클래스에서만)
-        # 2) 단계별 3역할 실행
-        ws = self.step_work_situation(path)  # proposer->rebutter->judge
-        hz = self.step_hazard(path, ws)
-        cp = self.step_compliance(path, ws, hz)
-        wd = self.step_wearing(path, ws, hz, cp)
-        iw = self.step_improper_wearing(path, ws, hz, cp, wd)
+    def build_line(
+        self, custom_id: str, image_file_id: str, image_path: Path, split: str
+    ) -> dict:
+        cfg = self.config
 
-        # 3) (선택) schema proposal 집계 등
-        return self.pack_result(path, split, ws, hz, cp, wd, iw)
+        prompt_text = self.build_prompt(image_path)  # 이 클래스에서 프롬프트 구성
 
-    # 아래 step_* 들은 "3역할"을 내부에서 수행하도록 구현
-    def step_work_situation(self, path: Path) -> dict: ...
-    def step_hazard(self, path: Path, ws: dict) -> dict: ...
-    def step_compliance(self, path: Path, ws: dict, hz: dict) -> dict: ...
-    def step_wearing(self, path: Path, ws: dict, hz: dict, cp: dict) -> dict: ...
-    def step_improper_wearing(
-        self, path: Path, ws: dict, hz: dict, cp: dict, wd: dict
-    ) -> dict: ...
-    def pack_result(self, path: Path, split: str, *steps) -> dict: ...
+        return self.api.build_responses_line(
+            custom_id=custom_id,
+            model=cfg.model.value,
+            prompt_text=prompt_text,
+            image_file_id=image_file_id,
+            detail="low",
+            max_output_tokens=800,
+            extra_body=None,
+        )
+
+    def build_prompt(self, image_path: Path) -> str:
+        # MADE 전체 프롬프트(5단계 + proposer/rebutter/judge를 한 요청에 다 담을지)
+        # 일단은 placeholder
+        return "..."
