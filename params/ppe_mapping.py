@@ -20,7 +20,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     WorkEnvironment.W01_CUTTING_GRINDING_MACHINING_POLISHING: [
         HazardPPE(
-            hazard=HazardFactor.CUT,
+            hazard=HazardFactor.CUTTING,
             ppe=[
                 PPEItem.SAFETY_GOGGLES,
                 PPEItem.SAFETY_SHOES,
@@ -195,7 +195,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
             ppe=[PPEItem.ANTI_PINCH_GLOVES, PPEItem.SAFETY_SHOES],
         ),
         HazardPPE(
-            hazard=HazardFactor.CUT,
+            hazard=HazardFactor.CUTTING,
             ppe=[PPEItem.CUT_RESISTANT_GLOVES, PPEItem.SAFETY_GOGGLES],
         ),
     ],

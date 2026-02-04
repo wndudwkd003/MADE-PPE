@@ -1,5 +1,7 @@
 # params/prompt_params.py
 
+from dataclasses import dataclass
+
 from enum import Enum
 
 
@@ -15,3 +17,9 @@ class StageEnum(str, Enum):
     COMPLIANCE = "compliance"
     WEARING = "wearing"
     IMPROPER_WEARING = "improper_wearing"
+
+
+@dataclass(frozen=True)
+class PromptPack:
+    system: str
+    user: str

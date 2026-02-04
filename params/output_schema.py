@@ -40,5 +40,9 @@ class WearingOut(BaseModel):
 
 
 class ImproperWearingOut(BaseModel):
-    improper: list[PPEItem] = Field(default_factory=list)
+    improper_wearing: list[PPEItem] = Field(default_factory=list)
     reason: str = Field(...)
+
+
+class TextOut(BaseModel):
+    text: str = Field(...)

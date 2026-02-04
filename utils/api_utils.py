@@ -2,21 +2,23 @@
 
 import os
 import json
-import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Type, Optional, Tuple
 
 from openai import OpenAI
+from pydantic import BaseModel
+from PIL import Image, ImageOps
 
 
 def set_api_key(api_json: str) -> None:
     api_json = str(api_json)
+
     with open(api_json, "r", encoding="utf-8") as f:
         api_keys = json.load(f)
 
     for i, (key, value) in enumerate(api_keys.items()):
         os.environ[key] = value
-        print(f"[{i+1}/{len(api_keys)}] Set env: {key}")
+        print(f"[{i + 1}/{len(api_keys)}] Set env: {key}")
 
     print("All API keys have been set.")
 
@@ -25,131 +27,109 @@ class OpenAIAPI:
     def __init__(self):
         self.client = OpenAI()
 
-    # ---------- Files ----------
-    def upload_image(self, image_path: str | Path) -> str:
-        """
-        이미지 파일 업로드 후 file_id 반환 (purpose="vision")
-        """
-        image_path = Path(image_path)
+    def _resize_to_512(
+        self,
+        src_path: Path,
+        out_path: Path,
+        mode: str = "pad",   # "pad" | "crop" | "stretch"
+        size: int = 512,
+    ) -> Path:
 
-        with image_path.open("rb") as f:
+        img = Image.open(src_path).convert("RGB")
+        w, h = img.size
+
+        # 512 이하이면 원본 그대로 사용(원하시면 여기서도 512로 맞추도록 바꿀 수 있음)
+        if max(w, h) <= size and (w == size and h == size):
+            img.save(out_path, format="JPEG", quality=95)
+            return out_path
+
+        if max(w, h) <= size and mode != "stretch":
+            # 작은 이미지는 그대로 업로드해도 되지만,
+            # "무조건 512x512" 원칙이면 아래처럼 처리하세요.
+            pass
+
+        if mode == "stretch":
+            # 강제 512x512 (왜곡 가능)
+            img = img.resize((size, size))
+        elif mode == "crop":
+            # 비율 유지 + 중앙 크롭
+            img = ImageOps.fit(img, (size, size), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+        else:
+            # mode == "pad": 비율 유지 + 패딩(왜곡 없음)
+            img = ImageOps.pad(img, (size, size), method=Image.Resampling.LANCZOS, color=(0, 0, 0), centering=(0.5, 0.5))
+
+        img.save(out_path, format="JPEG", quality=95)
+        return out_path
+
+    def upload_image(
+        self,
+        image_path: str | Path,
+        resize_if_over: int = 512,
+        resize_mode: str = "pad",
+        cache_dir: str | Path = "runs/_cache_resized",
+    ) -> str:
+
+        p = Path(image_path)
+
+        with Image.open(p) as img:
+            w, h = img.size
+
+        upload_path = p
+
+        if max(w, h) > resize_if_over:
+            cache_dir = Path(cache_dir)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            # 파일명 충돌 방지(원본 stem + 원본 크기 + 모드)
+            resized_path = cache_dir / f"{p.stem}__{w}x{h}__{resize_mode}__512.jpg"
+            if not resized_path.exists():
+                self._resize_to_512(p, resized_path, mode=resize_mode, size=512)
+
+            upload_path = resized_path
+
+        with upload_path.open("rb") as f:
             uploaded = self.client.files.create(file=f, purpose="vision")
 
         return uploaded.id
 
-    def upload_batch_jsonl(self, jsonl_path: str | Path) -> str:
-        """
-        배치 입력 .jsonl 업로드 후 input_file_id 반환 (purpose="batch")
-        """
-        jsonl_path = Path(jsonl_path)
-
-        with jsonl_path.open("rb") as f:
-            uploaded = self.client.files.create(file=f, purpose="batch")
-
-        return uploaded.id
-
-    def download_bytes(self, file_id: str) -> bytes:
-        """
-        Files API content 다운로드(바이너리)
-        """
-        resp = self.client.files.content(file_id)
-        return resp.read()
-
-    def download_text(self, file_id: str, encoding: str = "utf-8") -> str:
-        return self.download_bytes(file_id).decode(encoding, errors="replace")
-
-    # ---------- Batch ----------
-    def create_batch(
+    def call_responses(
         self,
-        input_file_id: str,
-        endpoint: str = "/v1/responses",
-        completion_window: str = "24h",
-        metadata: dict[str, Any] | None = None,
-    ):
-
-        return self.client.batches.create(
-            input_file_id=input_file_id,
-            endpoint=endpoint,
-            completion_window=completion_window,
-            metadata=metadata,
-        )
-
-    def retrieve_batch(self, batch_id: str):
-        return self.client.batches.retrieve(batch_id)
-
-    def wait_batch(self, batch_id: str, poll_sec: float = 5.0):
-        """
-        배치가 완료/실패/만료/취소 상태가 될 때까지 폴링
-        """
-        terminal = {"completed", "failed", "expired", "cancelled"}
-
-        while True:
-            b = self.retrieve_batch(batch_id)
-            status = getattr(b, "status", None)
-            if status in terminal:
-                return b
-            time.sleep(poll_sec)
-
-    # ---------- JSONL ----------
-    @staticmethod
-    def write_jsonl(lines: Iterable[dict[str, Any]], out_path: str | Path) -> Path:
-        out_path = Path(out_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with out_path.open("w", encoding="utf-8") as f:
-            for obj in lines:
-                f.write(json.dumps(obj, ensure_ascii=False))
-                f.write("\n")
-        return out_path
-
-    @staticmethod
-    def parse_jsonl(text: str) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            out.append(json.loads(line))
-        return out
-
-    # ---------- Batch line builder ----------
-    @staticmethod
-    def build_responses_line(
-        custom_id: str,
         model: str,
-        prompt_text: str,
+        system_text: str,
+        user_text: str,
         image_file_id: str,
-        detail: str = "low",
-        max_output_tokens: int = 800,
-        extra_body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Batch 입력 jsonl의 1줄(요청 1개)을 /v1/responses 용으로 구성
-        """
-        body: dict[str, Any] = {
-            "model": model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": prompt_text},
+        text_format: Type[BaseModel],
+        max_output_tokens: int,
+        temperature: float,
+        top_p: float,
+        retry_times: int,
+    ):
+        last_err = None
+        for attempt in range(1, retry_times + 1):
+            try:
+                resp = self.client.responses.parse(
+                    model=model,
+                    input=[
+                        {"role": "system", "content": [{"type": "input_text", "text": system_text}]},
                         {
-                            "type": "input_image",
-                            "file_id": image_file_id,
-                            "detail": detail,
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": user_text},
+                                {"type": "input_image", "file_id": image_file_id},
+                            ],
                         },
                     ],
-                }
-            ],
-            "max_output_tokens": max_output_tokens,
-        }
-
-        if extra_body:
-            body.update(extra_body)
-
-        return {
-            "custom_id": custom_id,
-            "method": "POST",
-            "url": "/v1/responses",
-            "body": body,
-        }
+                    text_format=text_format,
+                    max_output_tokens=max_output_tokens,
+                    # temperature=temperature, gpt-5.1-mini 에서는 지원 안함
+                    # top_p=top_p,
+                )
+                parsed_obj = resp.output_parsed
+                if parsed_obj is None:
+                    last_err = f"output_parsed is None (attempt {attempt}/{retry_times})"
+                    continue
+                return parsed_obj, None
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                continue
+        return None, last_err

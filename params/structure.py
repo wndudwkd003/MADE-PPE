@@ -31,7 +31,7 @@ class WorkEnvironment(Enum):
 
 
 class HazardFactor(Enum):
-    CUT = "Cutting"
+    CUTTING = "Cutting"
     TOXIC_SUBSTANCE = "Toxic substances"
     HIGH_TEMPERATURE = "High temperature"
     LOW_TEMPERATURE = "Low temperature"
