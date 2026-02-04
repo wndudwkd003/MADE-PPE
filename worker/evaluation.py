@@ -1,4 +1,5 @@
 # worker/evaluation.py
+from params.prompt_params import StageEnum
 
 from config.config import Config
 from params.params import TestModeEnum
@@ -15,7 +16,12 @@ from utils.eval_utils import (
     finalize_aggregate,
     get_cached_image_path,
     get_label_samples,
+    group_samples_by_split_and_image,
+    score_work_environment,
+    score_set_list,
+    score_ppe_bool_list,
 )
+
 from utils.json_utils import dump_json
 
 
@@ -46,9 +52,108 @@ def run_evaluation(config: Config):
     print("Evaluation completed.")
 
 
-
 def test_made_ppe(config: Config, target_paths: list[Path], test_dir: Path):
-    pass
+    started_at = datetime.now().isoformat(timespec="seconds")
+
+    samples = get_label_samples(target_paths)
+    grouped = group_samples_by_split_and_image(samples)
+
+    global_aggregate = init_aggregate(config.test_keys)
+
+    per_target_aggregates = {}
+    for target_tag in samples.keys():
+        per_target_aggregates[target_tag] = init_aggregate(config.test_keys)
+
+    counts = {
+        "train": {"num_images": 0, "num_compared": 0},
+        "valid": {"num_images": 0, "num_compared": 0},
+        "test": {"num_images": 0, "num_compared": 0},
+    }
+
+    for split, images in grouped.items():
+        counts[split]["num_images"] = len(images)
+
+        print(f"\n[MADE-PPE] Evaluating split: {split}, Number of images: {len(images)}")
+
+        for image_id, samples_by_target in images.items():
+            if len(samples_by_target) < 2:
+                continue
+
+            counts[split]["num_compared"] += 1
+
+            for test_key in config.test_keys:
+                if test_key == StageEnum.WORK_ENVIRONMENT.value:
+                    sample_score, per_target, used_targets = score_work_environment(samples_by_target, test_key)
+
+                elif test_key == StageEnum.HAZARD.value:
+                    sample_score, per_target, used_targets = score_set_list(samples_by_target, test_key)
+
+                elif test_key == StageEnum.COMPLIANCE.value:
+                    sample_score, per_target, used_targets = score_set_list(samples_by_target, test_key)
+
+                elif test_key == StageEnum.WEARING.value:
+                    sample_score, per_target, used_targets = score_ppe_bool_list(samples_by_target, test_key)
+
+                elif test_key == StageEnum.IMPROPER_WEARING.value:
+                    sample_score, per_target, used_targets = score_ppe_bool_list(samples_by_target, test_key)
+
+                else:
+                    continue
+
+                if len(used_targets) < 2:
+                    continue
+
+                update_aggregate(global_aggregate, test_key, sample_score)
+
+                for target_tag in used_targets:
+                    if target_tag in per_target:
+                        update_aggregate(per_target_aggregates[target_tag], test_key, per_target[target_tag])
+
+    aggregate_scores = finalize_aggregate(global_aggregate)
+
+    per_target_scores = {}
+    for target_tag, agg in per_target_aggregates.items():
+        per_target_scores[target_tag] = finalize_aggregate(agg)
+
+    dump_json(
+        test_dir / "summary.json",
+        {
+            "started_at": started_at,
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "aggregate": aggregate_scores,
+            "targets": per_target_scores,
+            "meta": {
+                "num_targets": len(samples),
+                "dataset": config.dataset.name,
+                "agent": config.agent.name,
+                "test_mode": config.test_mode.value,
+                "counts": counts,
+                "test_keys": config.test_keys,
+            },
+        },
+    )
+
+    plot_bar(
+        aggregate_scores,
+        test_dir / "aggregate_bar.png",
+        title="MADE-PPE agreement (aggregate)",
+    )
+
+    plot_grouped(
+        per_target_scores,
+        keys=config.test_keys,
+        out_path=test_dir / "grouped_by_target.png",
+        title="MADE-PPE agreement (by target)",
+    )
+
+    print("\n[MADE-PPE] Final aggregated results:")
+    for k in config.test_keys:
+        v = aggregate_scores[k]
+        print(f"  {k:20s}: {float(v):.4f}")
+
+    print(f"\n[MADE-PPE] Saved summary:   {test_dir / 'summary.json'}")
+    print(f"[MADE-PPE] Saved plot:      {test_dir / 'aggregate_bar.png'}")
+    print(f"[MADE-PPE] Saved plot:      {test_dir / 'grouped_by_target.png'}")
 
 
 def test_made_bench(config: Config, target_paths: list[Path], test_dir: Path):
