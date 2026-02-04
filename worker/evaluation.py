@@ -1,39 +1,23 @@
 # worker/evaluation.py
 
 from config.config import Config
-
-from params.params import DatasetEnum, TestModeEnum, AgentEnum
-from params.prompt_params import StageEnum
+from params.params import TestModeEnum
 from pathlib import Path
-import json
-import os
 from PIL import Image
 from utils.clip_utils import clip_image_text_sims
-
-import re
 from datetime import datetime
-import numpy as np
-import matplotlib.pyplot as plt
-import math
+from utils.vis_utils import plot_bar, plot_grouped
+from utils.eval_utils import (
+    get_test_targets,
+    init_aggregate,
+    update_aggregate,
+    build_texts,
+    finalize_aggregate,
+    get_cached_image_path,
+    get_label_samples,
+)
+from utils.json_utils import dump_json
 
-
-def get_test_targets(
-    agent: AgentEnum,
-    dataset: DatasetEnum,
-    targets: list[int],
-    run_dir: str,
-):
-    # runs/SH17/MADE1, MADE2, ... 예시
-
-    base = Path(run_dir) / dataset.value
-
-    paths = []
-
-    for i in targets:
-        agent_dir = base / f"{agent.name}{i}"
-        paths.append(agent_dir)
-
-    return paths
 
 
 def run_evaluation(config: Config):
@@ -62,177 +46,9 @@ def run_evaluation(config: Config):
     print("Evaluation completed.")
 
 
-def get_label_samples(target_paths: list[Path]):
-    samples_by_target = {}
-
-    for path in target_paths:
-        m = re.search(r"(\d+)$", path.name)
-        if m:
-            target_tag = f"MADE{m.group(1)}"
-        else:
-            target_tag = path.name
-
-        if target_tag not in samples_by_target:
-            samples_by_target[target_tag] = {"train": [], "valid": [], "test": []}
-
-        for split in samples_by_target[target_tag].keys():
-            if not (path / split).exists():
-                continue
-
-            sample_dir = path / split / "outputs" / "labels"
-            if not sample_dir.exists():
-                continue
-
-            for sample_file in sample_dir.glob("*.json"):
-                with open(sample_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    samples_by_target[target_tag][split].append(data)
-
-    return samples_by_target
-
-
-
-
-def get_cached_image_path(
-    original_path: str,
-    cache_dir: Path
-):
-    filename = os.path.basename(original_path)
-    base_name, _ = os.path.splitext(filename)
-
-    for f in cache_dir.iterdir():
-        if f.is_file() and f.name.startswith(base_name):
-            return str(f)
-
-    return original_path
-
-
-
-
 
 def test_made_ppe(config: Config, target_paths: list[Path], test_dir: Path):
     pass
-
-
-
-
-def build_texts(
-    sample: dict,
-    test_key: str
-):
-    texts = []
-
-    if test_key == StageEnum.WORK_ENVIRONMENT.value:
-        texts.append(f"this is a workplace environment of {sample[test_key]}")
-
-    elif test_key == StageEnum.HAZARD.value:
-        hazards = sample[test_key]
-
-        for h in hazards:
-            texts.append(f"this image contains the hazard of {h}")
-
-    elif test_key == StageEnum.COMPLIANCE.value:
-        ppe_list = sample[test_key]
-
-        for ppe in ppe_list:
-            texts.append(f"this image requires {ppe} for safety compliance")
-
-    elif test_key == StageEnum.WEARING.value:
-        wearing_list = sample[test_key]
-
-        for wearing in wearing_list:
-            ppe = wearing["ppe"]
-            worn = wearing["worn"]
-
-            if worn:
-                texts.append(f"a person is wearing {ppe}")
-            else:
-                texts.append(f"a person is not wearing {ppe}")
-
-    elif test_key == StageEnum.IMPROPER_WEARING.value:
-        improper_wearing_list = sample[test_key]
-
-        for improper in improper_wearing_list:
-            ppe = improper["ppe"]
-            worn = improper["worn"]
-
-            if worn:
-                texts.append(f"a person is improperly wearing {ppe}")
-            else:
-                texts.append(f"a person is wearing {ppe} properly")
-
-
-    return texts
-
-
-def init_aggregate(test_keys: list[str]):
-    return {k: {"total": 0.0, "count": 0} for k in test_keys}
-
-
-def update_aggregate(aggregate: dict, key: str, score: float):
-    aggregate[key]["total"] += float(score)
-    aggregate[key]["count"] += 1
-
-
-def finalize_aggregate(aggregate: dict):
-    out = {}
-    for k, v in aggregate.items():
-        total = float(v["total"])
-        count = int(v["count"])
-        out[k] = (total / count) if count > 0 else 0.0
-    return out
-
-
-def dump_json(path: Path, obj: dict):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-
-
-def plot_bar(scores: dict, out_path: Path, title: str):
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    keys = list(scores.keys())
-    vals = [float(scores[k]) for k in keys]
-
-    plt.figure(figsize=(10, 4))
-    plt.bar(keys, vals)
-    plt.ylim(0.0, 1.0)
-    plt.title(title)
-    plt.xticks(rotation=30, ha="right")
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=200)
-    plt.close()
-
-
-def plot_grouped(per_target_scores: dict, keys: list[str], out_path: Path, title: str):
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    targets = list(per_target_scores.keys())
-    if not targets:
-        return
-
-    x = np.arange(len(keys))
-    width = 0.8 / max(len(targets), 1)
-
-    plt.figure(figsize=(12, 5))
-
-    for i, t in enumerate(targets):
-        score_map = per_target_scores[t]
-        vals = []
-        for k in keys:
-            v = score_map[k]
-            vals.append(v)
-
-        plt.bar(x + i * width - 0.4 + width / 2, vals, width, label=str(t))
-
-    plt.ylim(0.0, 1.0)
-    plt.title(title)
-    plt.xticks(x, keys, rotation=30, ha="right")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=200)
-    plt.close()
 
 
 def test_made_bench(config: Config, target_paths: list[Path], test_dir: Path):
