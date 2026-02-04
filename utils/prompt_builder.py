@@ -115,11 +115,28 @@ class PromptBuilder:
 
     def proposal_policy_block(self):
         return (
-            "Proposal policy (optional, JUDGE only):\n"
-            "- You MAY include a proposal when you believe the current schema/mapping/label is insufficient.\n"
-            "- If you propose something: proposal.flag=true and fill proposal fields.\n"
-            "- If no proposal: proposal.flag=false and fill proposal fields with empty strings.\n"
+            "Proposal policy (JUDGE only, for schema/mapping/label change):\n"
+            "- proposal.flag:\n"
+            "  - true  => you are proposing a change.\n"
+            "  - false => no change needed.\n"
+            "\n"
+            "- proposal.type: choose ONE of the following (string):\n"
+            "  - add | remove | replace\n"
+            "\n"
+            "- proposal.target_from:\n"
+            "  - If type is replace/rename/merge/split/remove: MUST be an existing item in the current allowed label list.\n"
+            "  - If type is add: use empty string \"\".\n"
+            "\n"
+            "- proposal.target_to:\n"
+            "  - If type is add/replace/rename/merge/split: the desired new item/key.\n"
+            "  - If type is remove: use empty string \"\".\n"
+            "\n"
+            "- proposal.proposal: short evidence-based reason.\n"
+            "\n"
+            "- IMPORTANT:\n"
+            "  - When proposal.flag=false, set: type=\"\", target_from=\"\", target_to=\"\", proposal=\"\".\n"
         )
+
 
     # -----------------
     # stage hint
