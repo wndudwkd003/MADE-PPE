@@ -24,3 +24,8 @@ class ModelEnum(Enum):
 class DoModeEnum(Enum):
     LABELING = "labeling"
     EVALUATION = "evaluation"
+
+
+class TestModeEnum(Enum):
+    MADE_PPE = "made_ppe"
+    MADE_BENCH = "made_bench"

@@ -3,7 +3,13 @@
 
 from dataclasses import dataclass, field
 
-from params.params import DatasetEnum, ModelEnum, DoModeEnum, AgentEnum
+from params.params import (
+    DatasetEnum,
+    ModelEnum,
+    DoModeEnum,
+    AgentEnum,
+    TestModeEnum
+)
 
 from params.prompt_params import RoleEnum
 
@@ -19,13 +25,14 @@ ROLE_SEQUENCE = [
 
 @dataclass
 class Config:
-    do_mode: DoModeEnum = DoModeEnum.LABELING
+    do_mode: DoModeEnum = DoModeEnum.EVALUATION # LABELING or EVALUATION
+
     dataset: DatasetEnum = DatasetEnum.SH17
     model: ModelEnum = ModelEnum.GPT5_MINI
 
     agent: AgentEnum = AgentEnum.MADE
 
-    workers: int = 1
+    workers: int = 10
 
     runs: str = "runs"
     datasets_dir: str = "datasets"
@@ -45,4 +52,37 @@ class Config:
 
     retry_times: int = 5
 
+    cache_dir: str = "runs/_cache_resized"
 
+
+    # 테스트 모드
+    """
+      MADE-PPE:
+        - 일관성: 여러 타깃으로 결과물이 일정하게 나오는지
+        - 정합성: 만들어진 구조를 사람이 직접 정성 평가
+
+      MADE-Bench:
+        - 정확성: 5가지 라벨을 이미지와 직접 비교함 CLIP과 같은 모델 활용
+
+    """
+    device: str = "cuda"
+    clip_vision: str = "ViT-B-32"
+    clip_pretrained: str = "openai"
+
+    test_targets: list[int] = field(
+        default_factory=lambda: [1]
+    )
+
+    test_mode: TestModeEnum = TestModeEnum.MADE_PPE # MADE-PPE or MADE-Bench
+
+    test_keys: list[str] = field(
+        default_factory=lambda: [
+            "work_environment",
+            "hazards",
+            "required_ppe",
+            "wearing",
+            "improper_wearing",
+        ]
+    )
+
+    eval_runs: str = "runs_eval"
