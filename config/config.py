@@ -37,7 +37,7 @@ class Config:
 
     temperature: float = 0.7
     top_p: float = 0.9
-    max_output_tokens: int = 1024
+    max_output_tokens: int = 2048
 
     role_sequence: list[tuple[RoleEnum, int]] = field(
         default_factory=lambda: ROLE_SEQUENCE
