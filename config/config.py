@@ -71,10 +71,10 @@ class Config:
     clip_pretrained: str = "openai"
 
     test_targets: list[int] = field(
-        default_factory=lambda: [1,2]
+        default_factory=lambda: [1,2,3]
     )
 
-    test_mode: TestModeEnum = TestModeEnum.MADE_BENCH # MADE-PPE or MADE_BENCH
+    test_mode: TestModeEnum = TestModeEnum.MADE_PPE # MADE_PPE or MADE_BENCH
 
     test_keys: list[str] = field(
         default_factory=lambda: [

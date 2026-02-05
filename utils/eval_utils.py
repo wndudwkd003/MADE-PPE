@@ -1,4 +1,5 @@
 # utils/eval_utils.py
+from gradio import get_image
 from params.params import DatasetEnum, TestModeEnum, AgentEnum
 from params.prompt_params import StageEnum
 import json
@@ -159,12 +160,7 @@ def build_texts(
 
 
 def group_samples_by_split_and_image(samples_by_target: dict):
-    """
-    입력:
-      samples_by_target[target_tag][split] = [sample, ...]
-    출력:
-      grouped[split][image_id][target_tag] = sample
-    """
+
     grouped = {"train": {}, "valid": {}, "test": {}}
 
     for target_tag, target_splits in samples_by_target.items():
@@ -173,12 +169,9 @@ def group_samples_by_split_and_image(samples_by_target: dict):
                 continue
 
             for sample in split_samples:
-                if "image" not in sample:
-                    continue
-
                 image_path = sample["image"]
-                filename = os.path.basename(image_path)
-                image_id, _ = os.path.splitext(filename)
+
+                image_id = get_image_id(image_path)
 
                 if image_id not in grouped[split]:
                     grouped[split][image_id] = {}
@@ -324,22 +317,12 @@ def normalize_ppe_bool_list(value):
     wearing / improper_wearing: [{"ppe": "...", "worn": bool}, ...] -> dict[ppe]=bool
     """
     out = {}
-    if not isinstance(value, list):
-        return out
-
     for item in value:
-        if not isinstance(item, dict):
-            continue
-        if "ppe" not in item:
-            continue
-        if "worn" not in item:
-            continue
         ppe = item["ppe"]
         worn = item["worn"]
-        if isinstance(ppe, str) and isinstance(worn, bool):
-            out[ppe] = worn
-
+        out[ppe] = worn
     return out
+
 
 
 def ppe_union(maps: list[dict]):
@@ -351,31 +334,15 @@ def ppe_union(maps: list[dict]):
 
 
 def consensus_bool_for_ppe(maps: list[dict], ppe: str):
-    t = 0
-    f = 0
+    true_count = 0
     for m in maps:
-        if ppe in m:
-            if m[ppe]:
-                t += 1
-            else:
-                f += 1
+        if m[ppe]:
+            true_count += 1
 
-    if t == 0 and f == 0:
-        return None
-    if t > f:
-        return True
-    if f > t:
-        return False
-    return None  # tie
+    return true_count > (len(maps) // 2)
 
 
 def score_ppe_bool_list(samples_by_target: dict, key: str):
-    """
-    wearing / improper_wearing: PPE별 다수결 합의(consensus) 대비 타깃별 정확도 평균.
-    tie는 그 PPE를 평가에서 제외.
-    반환:
-      sample_score, per_target, used_targets
-    """
     used_targets = []
     maps = []
     target_maps = {}
@@ -393,16 +360,18 @@ def score_ppe_bool_list(samples_by_target: dict, key: str):
 
     ppes = ppe_union(maps)
 
-    consensus_by_ppe = {}
-    num_considered = 0
-    for ppe in ppes:
-        c = consensus_bool_for_ppe(maps, ppe)
-        if c is None:
-            continue
-        consensus_by_ppe[ppe] = c
-        num_considered += 1
+    for m in maps:
+        for ppe in ppes:
+            if ppe not in m:
+                m[ppe] = False
 
-    if num_considered == 0:
+    consensus_by_ppe = {}
+    for ppe in ppes:
+        consensus_by_ppe[ppe] = consensus_bool_for_ppe(maps, ppe)
+
+    num_ppes = len(ppes)
+
+    if num_ppes == 0:
         per_target = {}
         for target_tag in used_targets:
             per_target[target_tag] = 1.0
@@ -415,11 +384,13 @@ def score_ppe_bool_list(samples_by_target: dict, key: str):
         m = target_maps[target_tag]
         correct = 0
         for ppe, c in consensus_by_ppe.items():
-            if ppe in m and m[ppe] == c:
+            if m[ppe] == c:
                 correct += 1
-        score = float(correct) / float(num_considered)
+
+        score = float(correct) / float(num_ppes)
         per_target[target_tag] = score
         total += score
+
 
     sample_score = total / float(n)
     return sample_score, per_target, used_targets
