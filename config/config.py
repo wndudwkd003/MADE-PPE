@@ -25,14 +25,15 @@ ROLE_SEQUENCE = [
 
 @dataclass
 class Config:
-    do_mode: DoModeEnum = DoModeEnum.EVALUATION # LABELING or EVALUATION
+    # LABELING or EVALUATION or ANALYSIS
+    do_mode: DoModeEnum = DoModeEnum.EVALUATION
 
     dataset: DatasetEnum = DatasetEnum.SH17
     model: ModelEnum = ModelEnum.GPT5_MINI
 
     agent: AgentEnum = AgentEnum.MADE
 
-    workers: int = 10
+    workers: int = 20
 
     runs: str = "runs"
     datasets_dir: str = "datasets"
@@ -70,10 +71,10 @@ class Config:
     clip_pretrained: str = "openai"
 
     test_targets: list[int] = field(
-        default_factory=lambda: [1]
+        default_factory=lambda: [1,2]
     )
 
-    test_mode: TestModeEnum = TestModeEnum.MADE_PPE # MADE-PPE or MADE-Bench
+    test_mode: TestModeEnum = TestModeEnum.MADE_BENCH # MADE-PPE or MADE_BENCH
 
     test_keys: list[str] = field(
         default_factory=lambda: [
@@ -86,3 +87,6 @@ class Config:
     )
 
     eval_runs: str = "runs_eval"
+
+
+    top_k: int = 20

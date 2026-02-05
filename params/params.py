@@ -24,6 +24,7 @@ class ModelEnum(Enum):
 class DoModeEnum(Enum):
     LABELING = "labeling"
     EVALUATION = "evaluation"
+    ANALYSIS = "analysis"
 
 
 class TestModeEnum(Enum):

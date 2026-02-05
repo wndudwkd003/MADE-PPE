@@ -18,6 +18,14 @@ def main(config: Config):
 
         run_evaluation(config)
 
+    elif config.do_mode == DoModeEnum.ANALYSIS:
+        from worker.analysis import run_analysis
+
+        run_analysis(config)
+
+    else:
+        print(f"Unknown do_mode: {config.do_mode}")
+
 
 if __name__ == "__main__":
     # config/config.py

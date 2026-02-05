@@ -13,7 +13,7 @@ def get_test_targets(
     dataset: DatasetEnum,
     targets: list[int],
     run_dir: str,
-):
+) -> list[Path]:
     # runs/SH17/MADE1, MADE2, ... 예시
 
     base = Path(run_dir) / dataset.value
@@ -41,7 +41,7 @@ def finalize_aggregate(aggregate: dict):
     for k, v in aggregate.items():
         total = v["total"]
         count = v["count"]
-        out[k] = total / count
+        out[k] = total / count # if count > 0 else 0.0
     return out
 
 
@@ -73,15 +73,32 @@ def get_label_samples(target_paths: list[Path]):
 
     return samples_by_target
 
+def get_all_samples(target_path: Path):
+    out = {"train": [], "valid": [], "test": []}
 
+    for split in out.keys():
+        all_dir = target_path / split / "outputs" / "all"
+
+        files = list(all_dir.glob("*.json"))
+
+        for fp in files:
+            with open(fp, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            out[split].append(data)
+
+    return out
+
+def get_image_id(image_path: str):
+    filename = os.path.basename(image_path)
+    base, _ = os.path.splitext(filename)
+    return base
 
 
 def get_cached_image_path(
     original_path: str,
     cache_dir: Path
 ):
-    filename = os.path.basename(original_path)
-    base_name, _ = os.path.splitext(filename)
+    base_name = get_image_id(original_path)
 
     for f in cache_dir.iterdir():
         if f.is_file() and f.name.startswith(base_name):

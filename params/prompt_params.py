@@ -13,8 +13,8 @@ class RoleEnum(str, Enum):
 
 class StageEnum(str, Enum):
     WORK_ENVIRONMENT = "work_environment"
-    HAZARD = "hazard"
-    COMPLIANCE = "compliance"
+    HAZARD = "hazards"
+    COMPLIANCE = "required_ppe"
     WEARING = "wearing"
     IMPROPER_WEARING = "improper_wearing"
 

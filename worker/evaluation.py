@@ -76,9 +76,6 @@ def test_made_ppe(config: Config, target_paths: list[Path], test_dir: Path):
         print(f"\n[MADE-PPE] Evaluating split: {split}, Number of images: {len(images)}")
 
         for image_id, samples_by_target in images.items():
-            if len(samples_by_target) < 2:
-                continue
-
             counts[split]["num_compared"] += 1
 
             for test_key in config.test_keys:
@@ -100,16 +97,28 @@ def test_made_ppe(config: Config, target_paths: list[Path], test_dir: Path):
                 else:
                     continue
 
-                if len(used_targets) < 2:
-                    continue
-
                 update_aggregate(global_aggregate, test_key, sample_score)
 
                 for target_tag in used_targets:
                     if target_tag in per_target:
                         update_aggregate(per_target_aggregates[target_tag], test_key, per_target[target_tag])
 
+    print("\n[DEBUG] global_aggregate raw totals/counts:")
+    for k in config.test_keys:
+        v = global_aggregate[k]
+        print(f"  {k:30s} total={v['total']:.6f} count={v['count']}")
+
+    print("\n[DEBUG] StageEnum expected values:")
+    print([
+        StageEnum.WORK_ENVIRONMENT.value,
+        StageEnum.HAZARD.value,
+        StageEnum.COMPLIANCE.value,
+        StageEnum.WEARING.value,
+        StageEnum.IMPROPER_WEARING.value,
+    ])
+
     aggregate_scores = finalize_aggregate(global_aggregate)
+
 
     per_target_scores = {}
     for target_tag, agg in per_target_aggregates.items():
