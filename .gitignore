@@ -1,10 +1,5 @@
-config/api_keys.json
-
-datasets
-
-__pycache__
+__pycache__/
 *.pyc
-
-
+datasets/
 runs/
 runs_eval/
