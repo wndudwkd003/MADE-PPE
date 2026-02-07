@@ -48,25 +48,8 @@ class TextOut(BaseModel):
     text: str = Field(...)
 
 class OneShotOut(BaseModel):
-    # Stage 1: work_environment
-    work_environment: str = Field(...)
-    work_environment_reason: str = Field(...)
-    proposal_work_environment: ProposalOut = Field(...)
-
-    # Stage 2: hazards
-    hazards: list[str] = Field(default_factory=list)
-    hazards_reason: str = Field(...)
-    proposal_hazard: ProposalOut = Field(...)
-
-    # Stage 3: compliance (required PPE)
-    required_ppe: list[str] = Field(default_factory=list)
-    required_ppe_reason: str = Field(...)
-    proposal_compliance: ProposalOut = Field(...)
-
-    # Stage 4: wearing
-    wearing: list[PPEItem] = Field(default_factory=list)
-    wearing_reason: str = Field(...)
-
-    # Stage 5: improper_wearing
-    improper_wearing: list[PPEItem] = Field(default_factory=list)
-    improper_wearing_reason: str = Field(...)
+    work_environment: WorkEnvironmentOut = Field(...)
+    hazard: HazardOut = Field(...)
+    compliance: ComplianceOut = Field(...)
+    wearing: WearingOut = Field(...)
+    improper_wearing: ImproperWearingOut = Field(...)
