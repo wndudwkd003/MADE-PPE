@@ -2,7 +2,7 @@
 
 
 from config.config import Config
-from utils.clip_utils import clip_image_text_sims
+from utils.sim_score_utils import clip_image_text_sims
 from pathlib import Path
 import os
 import json

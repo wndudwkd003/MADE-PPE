@@ -26,6 +26,14 @@ class Agent(ABC):
             self._tls.api = OpenAIAPI()
         return self._tls.api
 
+
+    def get_agent_dir_name(self) -> str:
+        cfg = self.config
+        base_name = cfg.agent.value
+        if cfg.explicit_target_tag != -1:
+            return f"{base_name}{cfg.explicit_target_tag}"
+        return base_name
+
     def labeling(self, split, paths):
         all_dir = self.get_outputs_all_dir(split)
         labels_dir = self.get_outputs_labels_dir(split)
@@ -72,19 +80,22 @@ class Agent(ABC):
     # -----------------
     def get_outputs_all_dir(self, split):
         cfg = self.config
-        d = Path(cfg.runs) / cfg.dataset.value / cfg.agent.value / split / "outputs" / "all"
+        agent_dir = self.get_agent_dir_name()
+        d = Path(cfg.runs) / cfg.dataset.value / agent_dir / split / "outputs" / "all"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_outputs_labels_dir(self, split):
         cfg = self.config
-        d = Path(cfg.runs) / cfg.dataset.value / cfg.agent.value / split / "outputs" / "labels"
+        agent_dir = self.get_agent_dir_name()
+        d = Path(cfg.runs) / cfg.dataset.value / agent_dir / split / "outputs" / "labels"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def get_errors_jsonl_path(self, split):
         cfg = self.config
-        d = Path(cfg.runs) / cfg.dataset.value / cfg.agent.value / split / "errors"
+        agent_dir = self.get_agent_dir_name()
+        d = Path(cfg.runs) / cfg.dataset.value / agent_dir / split / "errors"
         d.mkdir(parents=True, exist_ok=True)
         return d / "errors.jsonl"
 

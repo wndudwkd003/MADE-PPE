@@ -41,7 +41,9 @@ class Config:
     seed: int = 42
 
     api_key: str = "config/api_keys.json"
-    max_todo: int = 300  # -1 for all
+    max_todo: int = 50  # -1 for all
+
+    explicit_target_tag: int = 2
 
     temperature: float = 0.7
     top_p: float = 0.9
@@ -67,14 +69,18 @@ class Config:
 
     """
     device: str = "cuda"
-    clip_vision: str = "ViT-B-32"
+    sentence_emb_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    clip_model: str = "ViT-B-32"
     clip_pretrained: str = "openai"
+    blip_model: str = "Salesforce/blip-itm-base-coco"
+    gme_model: str = "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct"
+
 
     test_targets: list[int] = field(
         default_factory=lambda: [1,2,3]
     )
 
-    test_mode: TestModeEnum = TestModeEnum.MADE_PPE # MADE_PPE or MADE_BENCH
+    test_mode: TestModeEnum = TestModeEnum.MADE_BENCH # MADE_PPE or MADE_BENCH
 
     test_keys: list[str] = field(
         default_factory=lambda: [
