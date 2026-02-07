@@ -41,7 +41,7 @@ class Config:
     seed: int = 42
 
     api_key: str = "config/api_keys.json"
-    max_todo: int = 250  # -1 for all
+    max_todo: int = 50  # -1 for all
 
     explicit_target_tag: int = 3
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from collections import Counter, defaultdict
-from typing import Any
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,11 +24,19 @@ class ProposalRecord:
     target_tag: str
     split: str
     image_id: str
-    proposal_field: str
-    proposal_type: str
+
+    stage: str          # work_environment | hazard | compliance
+    kind: str           # label | mapping
+    subject: str        # work_environment|hazard|ppe | we_to_hazard|we_hazard_to_ppe
+    proposal_type: str  # add | remove | modify
+
     target_from: str
     target_to: str
     proposal_text: str
+
+    scope_work_environment: str
+    scope_hazard: str
+
 
 class Analyzer:
     def __init__(self, config: Config):
@@ -56,7 +64,7 @@ class Analyzer:
             run_dir=self.config.runs,
         )
 
-        all_records: list[ProposalRecord] = []
+        all_records: List[ProposalRecord] = []
         for path in target_paths:
             target_tag = path.name
             samples_by_split = get_all_samples(path)
@@ -67,12 +75,10 @@ class Analyzer:
 
         if not all_records: return
 
-        # 스플릿별 데이터 분리
         records_by_split = defaultdict(list)
         for r in all_records:
             records_by_split[r.split].append(r)
 
-        # 1. 분석 수행 (스플릿별)
         final_report = {
             "meta": {
                 "started_at": started_at,
@@ -84,155 +90,259 @@ class Analyzer:
 
         for split, split_recs in records_by_split.items():
             desc = self.perform_descriptive_analysis(split_recs)
-            sem = self.perform_semantic_analysis(split_recs)
+            # 의미론적 분석 수행 (Type별 분석 포함)
+            sem_results, sem_embeddings = self.perform_semantic_analysis(split_recs)
 
-            # 시각화 (파일명에 split 포함)
             self.visualize_descriptive(desc, split)
-            self.visualize_semantic_all(sem, split)
+            self.visualize_semantic_all(sem_results, sem_embeddings, split)
             self.visualize_wordcloud(split_recs, split)
 
             final_report["split_analysis"][split] = {
                 "descriptive": desc,
-                "semantic": sem
+                "semantic": sem_results
             }
 
-        # 2. 전체 데이터 기반 추론 통계 (Split 간의 차이를 분석해야 하므로 전체 사용)
         final_report["inferential_analysis"] = self.perform_inferential_analysis(all_records)
         final_report["meta"]["finished_at"] = datetime.now().isoformat(timespec="seconds")
 
         json_path = self.save_dir / "analysis_report.json"
-
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(final_report, f, indent=4, ensure_ascii=False)
 
         return json_path
 
-
-
-    def extract_records(self, sample: dict, target_tag: str, split: str) -> list[ProposalRecord]:
+    def extract_records(self, sample: dict, target_tag: str, split: str) -> List[ProposalRecord]:
         final_state = sample["final_state"]
         image_id = get_image_id(sample["image"])
-        proposals = self.get_proposal(final_state)
+
+        stage_keys = ["work_environment", "hazard", "compliance"]
 
         records = []
-        for pk, pv in proposals:
-            field = pk[len("proposal_") :]
-            p_type = pv["type"]
-            t_from = "EMPTY" if p_type == "add" else (pv.get("target_from") or str(final_state.get(field, "")))
+        for stage in stage_keys:
+            stage_outputs = final_state.get("stage_outputs", {})
+            stage_out = stage_outputs.get(stage)
+            if not stage_out:
+                continue
+            proposals = stage_out.get("proposals", [])
+            for p in proposals:
+                if p["flag"] is not True:
+                    continue
 
-            records.append(ProposalRecord(
-                target_tag=target_tag, split=split, image_id=image_id,
-                proposal_field=field, proposal_type=p_type,
-                target_from=t_from, target_to=pv["target_to"],
-                proposal_text=pv["proposal"]
-            ))
+                scope = p["scope"]
+                scope_we = scope["work_environment"]
+                scope_hz = scope["hazard"]
+
+                p_type = p["type"]
+                t_from = p["target_from"]
+                t_to = p["target_to"]
+
+                if p_type == "add":
+                    if t_from == "":
+                        t_from_norm = "EMPTY"
+                    else:
+                        t_from_norm = t_from.strip()
+                else:
+                    t_from_norm = t_from.strip()
+
+                records.append(
+                    ProposalRecord(
+                        target_tag=target_tag,
+                        split=split,
+                        image_id=image_id,
+
+                        stage=stage,
+                        kind=p["kind"],
+                        subject=p["subject"],
+                        proposal_type=p_type,
+
+                        target_from=t_from_norm,
+                        target_to=t_to.strip(),
+                        proposal_text=p["proposal"],
+
+                        scope_work_environment=scope_we.strip(),
+                        scope_hazard=scope_hz.strip(),
+                    )
+                )
+
         return records
 
-    def get_proposal(self, final_state: dict[str, Any]):
-        return [(k, v) for k, v in final_state.items() if k.startswith("proposal_") and v.get("flag") is True]
 
-    def perform_descriptive_analysis(self, records: list[ProposalRecord]):
-        results = defaultdict(lambda: defaultdict(Counter))
+    def perform_descriptive_analysis(self, records: List[ProposalRecord]):
+        label_results = defaultdict(lambda: defaultdict(Counter))
+        we_to_hazard_results = defaultdict(lambda: defaultdict(Counter))
+        we_hazard_to_ppe_results = defaultdict(lambda: defaultdict(Counter))
+
         for r in records:
-            results[r.proposal_field][r.proposal_type][(r.target_from, r.target_to)] += 1
+            if r.kind == "label":
+                key = r.subject
+                label_results[key][r.proposal_type][(r.target_from, r.target_to)] += 1
+                continue
 
-        formatted = {}
-        for field, types in results.items():
-            formatted[field] = {}
-            for p_type, counts in types.items():
-                formatted[field][p_type] = [
-                    {"from": f, "to": t, "count": c}
-                    for (f, t), c in counts.most_common(self.config.top_k)
-                ]
-        return formatted
+            if r.kind == "mapping" and r.subject == "we_to_hazard":
+                key = r.scope_work_environment if r.scope_work_environment else "(missing_we)"
+                we_to_hazard_results[key][r.proposal_type][(r.target_from, r.target_to)] += 1
+                continue
 
-    def perform_semantic_analysis(self, records: list[ProposalRecord], max_k: int = 10):
-        field_groups = defaultdict(list)
+            if r.kind == "mapping" and r.subject == "we_hazard_to_ppe":
+                key = (
+                    r.scope_work_environment if r.scope_work_environment else "(missing_we)",
+                    r.scope_hazard if r.scope_hazard else "(missing_hazard)",
+                )
+                we_hazard_to_ppe_results[key][r.proposal_type][(r.target_from, r.target_to)] += 1
+                continue
+
+        return {
+            "label": self.format_topk(label_results, self.config.top_k),
+            "mapping": {
+                "we_to_hazard": self.format_topk(we_to_hazard_results, self.config.top_k),
+                "we_hazard_to_ppe": self.format_topk(we_hazard_to_ppe_results, self.config.top_k),
+            },
+        }
+
+
+    def perform_semantic_analysis(self, records: List[ProposalRecord], max_k: int = 10) -> Tuple[Dict, Dict]:
+        subject_groups = defaultdict(list)
         for r in records:
-            field_groups[r.proposal_field].append(r)
+            if r.kind != "label":
+                continue
+            subject_groups[r.subject].append(r)
 
-        analysis_by_field = {}
-        for field, f_recs in field_groups.items():
-            labels = list(set(r.target_to.replace('_', ' ').lower() for r in f_recs if r.target_to) |
-                          set(r.target_from.replace('_', ' ').lower() for r in f_recs if r.target_from != "EMPTY"))
+        analysis_by_subject = {}
+        embeddings_by_subject = {}
 
-            if len(labels) < 3: continue
-            embeddings = self.embed_model.encode(labels)
+        for subject, s_recs in subject_groups.items():
+            all_labels = set()
+            for r in s_recs:
+                if r.target_to:
+                    all_labels.add(r.target_to.upper())
+                if r.target_from and r.target_from != "EMPTY":
+                    all_labels.add(r.target_from.upper())
 
-            best_k, max_s, scores = 2, -1, []
-            k_range = range(2, min(max_k, len(labels)))
+            label_list = sorted(list(all_labels))
+            if len(label_list) < 3:
+                continue
+
+            clean_labels = [l.replace("_", " ").lower() for l in label_list]
+            embeddings = self.embed_model.encode(clean_labels)
+            embeddings_by_subject[subject] = embeddings
+
+            best_k, max_s = 2, -1
+            k_range = range(2, min(max_k, len(label_list)))
             for k in k_range:
-                km = KMeans(n_clusters=k, n_init='auto', random_state=self.config.seed).fit(embeddings)
+                km = KMeans(n_clusters=k, n_init="auto", random_state=self.config.seed).fit(embeddings)
                 s = silhouette_score(embeddings, km.labels_)
-                scores.append(s)
-                if s > max_s: max_s, best_k = s, k
+                if s > max_s:
+                    max_s, best_k = s, k
 
-            km = KMeans(n_clusters=best_k, n_init='auto', random_state=self.config.seed).fit(embeddings)
+            km = KMeans(n_clusters=best_k, n_init="auto", random_state=self.config.seed).fit(embeddings)
             closest, _ = pairwise_distances_argmin_min(km.cluster_centers_, embeddings)
-            cluster_to_rep = {i: labels[idx].upper().replace(' ', '_') for i, idx in enumerate(closest)}
+            cluster_to_rep = {i: label_list[idx].upper() for i, idx in enumerate(closest)}
 
-            group_details = {cluster_to_rep[i]: {"count": 0, "members": []} for i in range(best_k)}
-            for idx, label_idx in enumerate(km.labels_):
-                group_details[cluster_to_rep[label_idx]]["members"].append(labels[idx].upper().replace(' ', '_'))
+            label_to_rep = {}
+            for idx, label in enumerate(label_list):
+                label_to_rep[label.upper()] = cluster_to_rep[km.labels_[idx]]
 
-            for r in f_recs:
-                target_clean = r.target_to.replace('_', ' ').upper()
-                for rep, info in group_details.items():
-                    if target_clean in info["members"]:
-                        info["count"] += 1
-                        break
+            semantic_types = defaultdict(Counter)
+            for r in s_recs:
+                s_from = "EMPTY"
+                if r.target_from != "EMPTY":
+                    s_from = label_to_rep[r.target_from.upper()] if r.target_from.upper() in label_to_rep else r.target_from.upper()
 
-            analysis_by_field[field] = {
-                "optimal_k": best_k, "silhouette_score": float(max_s),
-                "k_search": {"ks": list(k_range), "scores": [float(s) for s in scores]},
-                "groups": group_details, "embeddings": embeddings.tolist(),
-                "cluster_labels": km.labels_.tolist(), "reps": cluster_to_rep
+                s_to = label_to_rep[r.target_to.upper()] if r.target_to.upper() in label_to_rep else r.target_to.upper()
+
+                semantic_types[r.proposal_type][(s_from, s_to)] += 1
+
+            type_analysis = {}
+            for p_type, counts in semantic_types.items():
+                type_analysis[p_type] = [
+                    {"from_merged": f, "to_merged": t, "count": c}
+                    for (f, t), c in counts.most_common(10)
+                ]
+
+            analysis_by_subject[subject] = {
+                "optimal_k": best_k,
+                "silhouette_score": float(max_s),
+                "type_semantic_transitions": type_analysis,
+                "reps": cluster_to_rep,
+                "label_to_rep": label_to_rep,
             }
-        return analysis_by_field
 
-    def perform_inferential_analysis(self, all_records: list[ProposalRecord]):
+        return analysis_by_subject, embeddings_by_subject
+
+
+    def perform_inferential_analysis(self, all_records: List[ProposalRecord]):
         df = pd.DataFrame([asdict(r) for r in all_records])
+
         inf = {}
-        for field in df['proposal_field'].unique():
-            f_df = df[df['proposal_field'] == field]
-            ct = pd.crosstab(f_df['split'], f_df['proposal_type'])
-            if ct.size > 1:
-                chi2, p, _, _ = chi2_contingency(ct)
-                inf[f"{field}_split_vs_type"] = {"chi2": chi2, "p_value": p, "distribution": ct.to_dict()}
+        groups = df.groupby(["kind", "subject"])
+        for (kind, subject), gdf in groups:
+            ct = pd.crosstab(gdf["split"], gdf["proposal_type"])
+            if ct.size <= 1:
+                continue
+            chi2, p, _, _ = chi2_contingency(ct)
+            key = f"{kind}__{subject}__split_vs_type"
+            inf[key] = {"chi2": float(chi2), "p_value": float(p), "distribution": ct.to_dict()}
+
         return inf
 
+
     def visualize_descriptive(self, desc_results: dict, split: str):
-        for field, types in desc_results.items():
+        label_desc = desc_results["label"]
+        self._visualize_desc_block(label_desc, split, prefix="label")
+
+        mapping_desc = desc_results["mapping"]
+
+        we_to_hazard_desc = mapping_desc["we_to_hazard"]
+        self._visualize_desc_block(we_to_hazard_desc, split, prefix="mapping_we_to_hazard")
+
+        we_hazard_to_ppe_desc = mapping_desc["we_hazard_to_ppe"]
+        self._visualize_desc_block(we_hazard_to_ppe_desc, split, prefix="mapping_we_hazard_to_ppe")
+
+
+    def _visualize_desc_block(self, block: dict, split: str, prefix: str):
+        for group_key, types in block.items():
             for p_type, trans in types.items():
-                if not trans: continue
+                if not trans:
+                    continue
+
                 plt.figure(figsize=(10, 6))
-                labels = [f"{t['from']} -> {t['to']}" for t in trans]
-                counts = [t['count'] for t in trans]
+                labels = [f"{t['from'][:20]} -> {t['to'][:20]}" for t in trans]
+                counts = [t["count"] for t in trans]
+
                 sns.barplot(x=counts, y=labels, palette="magma")
-                plt.title(f"[{split.upper()}] {field} - {p_type.upper()}")
+                plt.title(f"[{split.upper()}] {prefix} | {group_key} | {p_type.upper()}")
                 plt.tight_layout()
-                plt.savefig(self.save_dir / f"{split}_trans_{field}_{p_type}.png")
+                safe_group = str(group_key).replace(" ", "_").replace("/", "_")
+                plt.savefig(self.save_dir / f"{split}_{prefix}_{safe_group}_{p_type}.png")
                 plt.close()
 
-    def visualize_semantic_all(self, sem_results: dict, split: str):
-        for field, data in sem_results.items():
-            plt.figure(figsize=(6, 4))
-            plt.plot(data["k_search"]["ks"], data["k_search"]["scores"], marker='o')
-            plt.title(f"[{split.upper()}] {field} Silhouette")
-            plt.savefig(self.save_dir / f"{split}_silhouette_{field}.png")
-            plt.close()
-            self.visualize_embedding_space(field, data, split)
 
-    def visualize_embedding_space(self, field: str, data: dict, split: str):
-        embeddings = np.array(data["embeddings"])
+    def visualize_semantic_all(self, sem_results: dict, sem_embeddings: dict, split: str):
+        for subject, data in sem_results.items():
+            if subject not in sem_embeddings:
+                continue
+            self.visualize_embedding_space(subject, data, sem_embeddings[subject], split)
+
+
+    def visualize_embedding_space(self, field: str, data: dict, embeddings: np.ndarray, split: str):
         n = embeddings.shape[0]
+        # label_to_rep의 순서대로 클러스터 ID 할당
+        labels_in_order = sorted(data["label_to_rep"].keys())
+        cluster_labels = []
+        for l in labels_in_order:
+            rep = data["label_to_rep"][l]
+            for idx, r_name in data["reps"].items():
+                if r_name == rep:
+                    cluster_labels.append(idx)
+                    break
+
         reducer = TSNE(n_components=2, perplexity=min(30, n-1), random_state=self.config.seed, init='pca', learning_rate='auto')
         reduced = reducer.fit_transform(embeddings)
 
         plt.figure(figsize=(10, 8))
-        plt.scatter(reduced[:, 0], reduced[:, 1], c=data["cluster_labels"], cmap='tab10', s=100)
+        plt.scatter(reduced[:, 0], reduced[:, 1], c=cluster_labels, cmap='tab10', s=100)
         for i, rep in data["reps"].items():
-            mask = np.array(data["cluster_labels"]) == i
+            mask = np.array(cluster_labels) == i
             if not mask.any(): continue
             center = reduced[mask].mean(axis=0)
             plt.annotate(rep, center, fontsize=8, fontweight='bold', bbox=dict(facecolor='white', alpha=0.6))
@@ -240,7 +350,7 @@ class Analyzer:
         plt.savefig(self.save_dir / f"{split}_embedding_{field}.png")
         plt.close()
 
-    def visualize_wordcloud(self, records: list[ProposalRecord], split: str):
+    def visualize_wordcloud(self, records: List[ProposalRecord], split: str):
         text = " ".join([r.proposal_text for r in records if r.proposal_text])
         if text.strip():
             wc = WordCloud(width=800, height=400, background_color='white').generate(text)

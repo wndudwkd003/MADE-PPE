@@ -182,20 +182,42 @@ class MADE(Agent):
         if stage == StageEnum.WORK_ENVIRONMENT:
             state["work_environment"] = self._enum_to_name(parsed.work_environment)
             state["work_environment_reason"] = parsed.reason
-            state["proposal_work_environment"] = parsed.proposal.model_dump() if parsed.proposal else None
+
+            d = parsed.model_dump()
+            state["proposals_work_environment"] = d.get("proposals", [])
+
+            if "stage_outputs" not in state:
+                state["stage_outputs"] = {}
+            state["stage_outputs"]["work_environment"] = d
+
             return
 
         if stage == StageEnum.HAZARD:
             state["hazards"] = self._list_enum_to_names(parsed.hazards)
             state["hazards_reason"] = parsed.reason
-            state["proposal_hazard"] = parsed.proposal.model_dump() if parsed.proposal else None
+
+            d = parsed.model_dump()
+            state["proposals_hazard"] = d.get("proposals", [])
+
+            if "stage_outputs" not in state:
+                state["stage_outputs"] = {}
+            state["stage_outputs"]["hazard"] = d
+
             return
 
         if stage == StageEnum.COMPLIANCE:
             state["required_ppe"] = self._list_enum_to_names(parsed.required_ppe)
             state["required_ppe_reason"] = parsed.reason
-            state["proposal_compliance"] = parsed.proposal.model_dump() if parsed.proposal else None
+
+            d = parsed.model_dump()
+            state["proposals_compliance"] = d.get("proposals", [])
+
+            if "stage_outputs" not in state:
+                state["stage_outputs"] = {}
+            state["stage_outputs"]["compliance"] = d
+
             return
+
 
         if stage == StageEnum.WEARING:
             d = parsed.model_dump()

@@ -115,27 +115,78 @@ class PromptBuilder:
 
     def proposal_policy_block(self):
         return (
-            "Proposal policy (JUDGE only, for schema/mapping/label change):\n"
-            "- proposal.flag:\n"
-            "  - true  => you are proposing a change.\n"
-            "  - false => no change needed.\n"
+            "Proposal policy (JUDGE only, for label-set / mapping-table changes):\n"
             "\n"
-            "- proposal.type: choose EXACTLY ONE of the following (string):\n"
+            "- You must output proposals as a list field named: proposals\n"
+            "- If no changes are needed, set proposals to an empty list: []\n"
+            "\n"
+            "Each item in proposals must match ProposalOut:\n"
+            "- flag: must be true for every proposal item in the list\n"
+            "- kind: choose EXACTLY ONE of the following (string):\n"
+            "  - label | mapping\n"
+            "\n"
+            "- subject depends on kind:\n"
+            "  - kind=label: work_environment | hazard | ppe\n"
+            "  - kind=mapping: we_to_hazard | we_hazard_to_ppe\n"
+            "\n"
+            "- type: choose EXACTLY ONE of the following (string):\n"
             "  - add | remove | modify\n"
             "\n"
-            "- proposal.target_from:\n"
-            "  - If type is modify or remove: MUST be an existing item in the current allowed label list.\n"
-            "  - If type is add: use empty string \"\".\n"
+            "- target_from / target_to rules:\n"
+            "  - add:    target_from=\"\" and target_to=\"NEW_KEY\"\n"
+            "  - remove: target_from=\"EXISTING_KEY\" and target_to=\"\"\n"
+            "  - modify: target_from=\"EXISTING_KEY\" and target_to=\"NEW_KEY\"\n"
             "\n"
-            "- proposal.target_to:\n"
-            "  - If type is add or modify: the desired new item/label key.\n"
-            "  - If type is remove: use empty string \"\".\n"
+            "- scope rules (only for kind=mapping):\n"
+            "  - subject=we_to_hazard:\n"
+            "    - scope.work_environment must be set (WorkEnvironment key)\n"
+            "    - scope.hazard must be \"\"\n"
+            "    - hazard key is expressed by target_from/target_to\n"
             "\n"
-            "- proposal.proposal: short evidence-based reason.\n"
+            "  - subject=we_hazard_to_ppe:\n"
+            "    - scope.work_environment must be set (WorkEnvironment key)\n"
+            "    - scope.hazard must be set (HazardFactor key)\n"
+            "    - PPE key is expressed by target_from/target_to\n"
+            "\n"
+            "- scope rules (for kind=label):\n"
+            "  - scope.work_environment=\"\" and scope.hazard=\"\"\n"
+            "\n"
+            "- proposal: short, evidence-based reason\n"
             "\n"
             "- IMPORTANT:\n"
-            "  - When proposal.flag=false, set: type=\"\", target_from=\"\", target_to=\"\", proposal=\"\".\n"
+            "  - If you propose adding a new label (kind=label, type=add), you should also include\n"
+            "    at least one mapping proposal (kind=mapping) that connects the new label so it is not isolated.\n"
         )
+
+
+    def hazard_to_ppe_map_for_work_env(self, we: WorkEnvironment):
+        hps = WORK_ENV_TO_HAZARD_PPE.get(we, [])
+        out = {}
+        for hp in hps:
+            out[hp.hazard.name] = [p.name for p in hp.ppe]
+        return out
+
+
+    def mapping_subset_lines(self, we_name: str | None, hazards: list[str] | None):
+        if not we_name:
+            return []
+        if not hazards:
+            return []
+        try:
+            we = WorkEnvironment[we_name]
+        except Exception:
+            return []
+
+        hazard_to_ppe = self.hazard_to_ppe_map_for_work_env(we)
+
+        lines = []
+        for h in hazards:
+            if h in hazard_to_ppe:
+                lines.append(f"- {h} -> {hazard_to_ppe[h]}")
+
+        if not lines:
+            return []
+        return ["Mapping context (selected hazards only):"] + lines
 
 
     # -----------------
@@ -178,8 +229,16 @@ class PromptBuilder:
                 if recommended
                 else "- Recommended PPE given selected context: (none from mapping)"
             )
+
+            mapping_lines = self.mapping_subset_lines(we_name, hazards)
+
+            if mapping_lines:
+                lines.append("")
+                lines.extend(mapping_lines)
+
             lines.append("- You can still choose from all PPEItem keys listed above.")
             return "\n".join(lines)
+
 
         return ""
 
@@ -335,7 +394,7 @@ class PromptBuilder:
                 "- Output WorkEnvironmentOut.\n"
                 "- Choose exactly 1 WorkEnvironment key.\n"
                 "- Provide a short reason.\n"
-                "- (Optional) Fill proposal fields if necessary.\n"
+                "- Output proposals as a list. Use [] if no change is needed.\n"
             )
         if stage == StageEnum.HAZARD:
             return (
@@ -343,7 +402,7 @@ class PromptBuilder:
                 "- Output HazardOut.\n"
                 "- Select all applicable HazardFactor keys.\n"
                 "- Provide a short reason.\n"
-                "- (Optional) Fill proposal fields if necessary.\n"
+                "- Output proposals as a list. Use [] if no change is needed.\n"
             )
         if stage == StageEnum.COMPLIANCE:
             return (
@@ -351,7 +410,7 @@ class PromptBuilder:
                 "- Output ComplianceOut.\n"
                 "- Decide required_ppe as FINAL PPE list.\n"
                 "- Provide a short reason.\n"
-                "- (Optional) Propose mapping adjustment if necessary.\n"
+                "- Output proposals as a list. Use [] if no change is needed.\n"
             )
         if stage == StageEnum.WEARING:
             return (
