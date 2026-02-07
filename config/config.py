@@ -67,14 +67,19 @@ class Config:
 
     """
     device: str = "cuda"
-    clip_vision: str = "ViT-B-32"
+    clip_model: str = "ViT-B-32"
     clip_pretrained: str = "openai"
+
+
+    blip_model: str = "Salesforce/blip-itm-base-coco"
+    gme_model: str = "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct"
+
 
     test_targets: list[int] = field(
         default_factory=lambda: [1,2,3]
     )
 
-    test_mode: TestModeEnum = TestModeEnum.MADE_PPE # MADE_PPE or MADE_BENCH
+    test_mode: TestModeEnum = TestModeEnum.MADE_BENCH # MADE_PPE or MADE_BENCH
 
     test_keys: list[str] = field(
         default_factory=lambda: [

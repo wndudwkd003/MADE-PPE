@@ -1,4 +1,5 @@
 # utils/eval_utils.py
+from unittest import result
 from gradio import get_image
 from params.params import DatasetEnum, TestModeEnum, AgentEnum
 from params.prompt_params import StageEnum
@@ -109,53 +110,61 @@ def get_cached_image_path(
 
 
 
+
+def get_formatted_text(field_text: str):
+    parts = field_text.split("_")
+
+    if len(parts) > 0 and re.fullmatch(r"W\d+", parts[0]) is not None:
+        parts = parts[1:]
+
+    parts = [p.lower() for p in parts]
+    return " ".join(parts)
+
+
+
 def build_texts(
     sample: dict,
-    test_key: str
 ):
-    texts = []
+    results = {}
 
-    if test_key == StageEnum.WORK_ENVIRONMENT.value:
-        texts.append(f"this is a workplace environment of {sample[test_key]}")
+    for key, value in sample.items():
+        if key == StageEnum.WORK_ENVIRONMENT.value:
+            env_text = get_formatted_text(value)
+            results[key] = [f"this work is {env_text}."]
 
-    elif test_key == StageEnum.HAZARD.value:
-        hazards = sample[test_key]
+        elif key == StageEnum.HAZARD.value:
+            results[key] = [
+                f"this image contains a {get_formatted_text(v)} hazard."
+                for v in value
+            ]
 
-        for h in hazards:
-            texts.append(f"this image contains the hazard of {h}")
+        elif key == StageEnum.COMPLIANCE.value:
+            results[key] = [
+                f"this work requires {get_formatted_text(v)}."
+                for v in value
+            ]
 
-    elif test_key == StageEnum.COMPLIANCE.value:
-        ppe_list = sample[test_key]
+        elif key == StageEnum.WEARING.value:
+            wearings = []
+            for item in value:
+                ppe = get_formatted_text(item["ppe"])
+                worn = item["worn"]
+                wearings.append(
+                    f"the worker is {'wearing' if worn else 'not wearing'} {ppe}."
+                )
+            results[key] = wearings
 
-        for ppe in ppe_list:
-            texts.append(f"this image requires {ppe} for safety compliance")
+        elif key == StageEnum.IMPROPER_WEARING.value:
+            wearings = []
+            for item in value:
+                ppe = get_formatted_text(item["ppe"])
+                worn = item["worn"]
+                wearings.append(
+                    f"the worker is wearing {ppe} {'improperly' if worn else 'properly'}."
+                )
+            results[key] = wearings
 
-    elif test_key == StageEnum.WEARING.value:
-        wearing_list = sample[test_key]
-
-        for wearing in wearing_list:
-            ppe = wearing["ppe"]
-            worn = wearing["worn"]
-
-            if worn:
-                texts.append(f"a person is wearing {ppe}")
-            else:
-                texts.append(f"a person is not wearing {ppe}")
-
-    elif test_key == StageEnum.IMPROPER_WEARING.value:
-        improper_wearing_list = sample[test_key]
-
-        for improper in improper_wearing_list:
-            ppe = improper["ppe"]
-            worn = improper["worn"]
-
-            if worn:
-                texts.append(f"a person is improperly wearing {ppe}")
-            else:
-                texts.append(f"a person is wearing {ppe} properly")
-
-
-    return texts
+    return results
 
 
 
@@ -394,3 +403,19 @@ def score_ppe_bool_list(samples_by_target: dict, key: str):
 
     sample_score = total / float(n)
     return sample_score, per_target, used_targets
+
+
+def get_avg(scores: list[float]):
+    if len(scores) == 0:
+        return 0.0
+    return sum(scores) / float(len(scores))
+
+
+def calc_avg(stats: dict, ndigits: int = 5, as_str: bool = False):
+    out = {}
+    for f, m_dict in stats.items():
+        out[f] = {}
+        for m, data in m_dict.items():
+            v = data["total"] / float(data["count"]) if data["count"] > 0 else 0.0
+            out[f][m] = f"{v:.{ndigits}f}" if as_str else round(v, ndigits)
+    return out

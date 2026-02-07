@@ -1,11 +1,12 @@
 # worker/evaluation.py
+import test
 from params.prompt_params import StageEnum
-
+from tqdm.auto import tqdm
 from config.config import Config
 from params.params import TestModeEnum
 from pathlib import Path
 from PIL import Image
-from utils.clip_utils import clip_image_text_sims
+from utils.sim_score_utils import ImageTextScorer
 from datetime import datetime
 from utils.vis_utils import plot_bar, plot_grouped
 from utils.eval_utils import (
@@ -20,6 +21,9 @@ from utils.eval_utils import (
     score_work_environment,
     score_set_list,
     score_ppe_bool_list,
+    get_image_id,
+    get_avg,
+    calc_avg
 )
 
 from utils.json_utils import dump_json
@@ -164,54 +168,85 @@ def test_made_ppe(config: Config, target_paths: list[Path], test_dir: Path):
     print(f"[MADE-PPE] Saved plot:      {test_dir / 'aggregate_bar.png'}")
     print(f"[MADE-PPE] Saved plot:      {test_dir / 'grouped_by_target.png'}")
 
-
-def test_made_bench(config: Config, target_paths: list[Path], test_dir: Path):
+def test_made_bench(
+    config: Config,
+    target_paths: list[Path],
+    test_dir: Path
+):
     started_at = datetime.now().isoformat(timespec="seconds")
+    samples_out_dir = test_dir / "samples"
+    samples_out_dir.mkdir(parents=True, exist_ok=True)
 
-    # samples: {target_tag: {"train": [...], "valid": [...], "test": [...]} }
+    metrics = ["clip", "blip_itm", "blip_itc", "gme", "gme_inst"]
+    target_stats = {}
+    global_stats = {k: {m: {"total": 0.0, "count": 0} for m in metrics} for k in config.test_keys}
+
+    scorer = ImageTextScorer(
+        clip_model_name=config.clip_model,
+        clip_pretrained=config.clip_pretrained,
+        blip_model_name=config.blip_model,
+        gme_model_name=config.gme_model,
+        device=config.device,
+    )
+
     samples = get_label_samples(target_paths)
 
-    global_aggregate = init_aggregate(config.test_keys)
-    per_target_scores = {}
+    # 1. Target 단위에 tqdm 적용
+    target_pbar = tqdm(samples.items(), desc="Targets", leave=True)
+    for target_key, splits in target_pbar:
+        target_pbar.set_postfix(target=target_key)
 
-    cache_dir = Path(config.cache_dir)
+        target_stats[target_key] = {k: {m: {"total": 0.0, "count": 0} for m in metrics} for k in config.test_keys}
+        target_sample_out_dir = samples_out_dir / target_key
+        target_sample_out_dir.mkdir(parents=True, exist_ok=True)
 
-    for target_tag, target_samples in samples.items():
-        print(f"\n[MADE-Bench] Evaluating target: {target_tag}")
-
-        target_aggregate = init_aggregate(config.test_keys)
-
-        for split, split_samples in target_samples.items():
-            print(f"[MADE-Bench] Evaluating split: {split}, Number of samples: {len(split_samples)}")
-
-            for sample in split_samples:
+        for split, split_samples in splits.items():
+            sample_pbar = tqdm(split_samples, desc=f"  - {split}", leave=False)
+            for sample in sample_pbar:
                 image_path = sample["image"]
-                image_path = get_cached_image_path(image_path, cache_dir)
+                image_id = get_image_id(image_path)
 
-                image = Image.open(image_path).convert("RGB")
+                cached_image_path = get_cached_image_path(image_path, Path(config.cache_dir))
+                image = Image.open(cached_image_path).convert("RGB")
 
-                for test_key in config.test_keys:
-                    texts = build_texts(sample, test_key)
-                    if len(texts) == 0:
+                formatted_texts = build_texts(sample)
+                sample_results = {"image_id": image_id, "target": target_key, "split": split, "scores": {}}
+
+                for field, texts in formatted_texts.items():
+                    if len(texts) == 0 or field not in config.test_keys:
                         continue
 
-                    scores = clip_image_text_sims(
-                        image,
-                        texts,
-                        config.clip_vision,
-                        config.clip_pretrained,
-                        config.device,
-                    )
+                    # 모델 추론 (Heavy Task)
+                    clip_sims = scorer.get_clip_score(image, texts)
+                    blip_itm_score, blip_itc_score = scorer.get_blip_score(image, texts)
+                    gme_score, gme_inst_score = scorer.get_gme_score(image, texts)
 
-                    avg_score = sum(scores) / len(scores)
+                    raw_scores = {
+                        "clip": get_avg(clip_sims),
+                        "blip_itm": get_avg(blip_itm_score),
+                        "blip_itc": get_avg(blip_itc_score),
+                        "gme": get_avg(gme_score),
+                        "gme_inst": get_avg(gme_inst_score),
+                    }
 
-                    update_aggregate(target_aggregate, test_key, avg_score)
-                    update_aggregate(global_aggregate, test_key, avg_score)
+                    field_scores = {k: f"{v:.5f}" for k, v in raw_scores.items()}
 
-        target_scores = finalize_aggregate(target_aggregate)
-        per_target_scores[target_tag] = target_scores
+                    sample_results["scores"][field] = field_scores
 
-    aggregate_scores = finalize_aggregate(global_aggregate)
+                    for m in metrics:
+                        val = raw_scores[m]
+                        target_stats[target_key][field][m]["total"] += val
+                        target_stats[target_key][field][m]["count"] += 1
+                        global_stats[field][m]["total"] += val
+                        global_stats[field][m]["count"] += 1
+
+                dump_json(
+                    target_sample_out_dir / f"{target_key}_{image_id}_{split}.json",
+                    sample_results,
+                )
+
+    aggregate_scores = calc_avg(global_stats, ndigits=5, as_str=True)
+    per_target_scores = {tag: calc_avg(stats, ndigits=5, as_str=True) for tag, stats in target_stats.items()}
 
     dump_json(
         test_dir / "summary.json",
@@ -222,36 +257,17 @@ def test_made_bench(config: Config, target_paths: list[Path], test_dir: Path):
             "targets": per_target_scores,
             "meta": {
                 "num_targets": len(samples),
-                "dataset": config.dataset.name,
-                "agent": config.agent.name,
                 "test_mode": config.test_mode.value,
-                "clip_vision": config.clip_vision,
-                "clip_pretrained": config.clip_pretrained,
-                "device": config.device,
+                "test_keys": config.test_keys,
+                "metrics": metrics
             },
         },
     )
 
-    # 전체 평균(논문용 대표값) bar 그래프 저장
-    plot_bar(
-        aggregate_scores,
-        test_dir / "aggregate_bar.png",
-        title="MADE-Bench scores (aggregate)",
-    )
+    print(f"[MADE-BENCH] Evaluation finished. Summary saved to {test_dir / 'summary.json'}")
 
-    # 타깃별 비교 grouped 그래프 저장
-    plot_grouped(
-        per_target_scores,
-        keys=config.test_keys,
-        out_path=test_dir / "grouped_by_target.png",
-        title="MADE-Bench scores (grouped by target)",
-    )
 
-    print("\n[MADE-Bench] Final aggregated results:")
-    for k in config.test_keys:
-        v = aggregate_scores[k]
-        print(f"  {k:20s}: {float(v):.4f}")
 
-    print(f"\n[MADE-Bench] Saved summary:   {test_dir / 'summary.json'}")
-    print(f"[MADE-Bench] Saved plot:      {test_dir / 'aggregate_bar.png'}")
-    print(f"[MADE-Bench] Saved plot:      {test_dir / 'grouped_by_target.png'}")
+
+
+
