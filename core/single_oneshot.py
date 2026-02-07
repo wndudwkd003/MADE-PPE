@@ -15,6 +15,7 @@ class SingleOneShot(Agent):
     SINGLE_ONESHOT:
       - ONE API call per image
       - outputs compatible with SINGLE_STEP/MADE label payload format
+      - final_state includes stage_outputs for Analyzer compatibility
     """
 
     def __init__(self, config):
@@ -25,7 +26,7 @@ class SingleOneShot(Agent):
     def run_one_image(self, image_file_id, image_path, split, all_dir, labels_dir, errors_jsonl):
         cfg = self.config
 
-        state = {}
+        state = {"stage_outputs": {}}
         logs = []
 
         stem = image_path.stem
@@ -153,37 +154,92 @@ class SingleOneShot(Agent):
                 out.append({"ppe": ppe, "worn": bool(it.get("worn"))})
         return out
 
+    def _dump_proposals(self, proposals):
+        out = []
+        for p in proposals:
+            out.append(p.model_dump())
+        return out
+
     # -----------------
     # state update
     # -----------------
     def update_state_from_oneshot(self, parsed: OneShotOut, state: dict):
+        stage_outputs = state["stage_outputs"]
+
         # 1) WORK_ENVIRONMENT (WorkEnvironmentOut)
-        we = parsed.work_environment
-        state["work_environment"] = self._enum_to_name(we.work_environment)
-        state["work_environment_reason"] = we.reason
-        state["proposal_work_environment"] = we.proposal.model_dump() if we.proposal else None
+        we_out = parsed.work_environment
+        we = self._enum_to_name(we_out.work_environment)
+        we_reason = we_out.reason
+        we_proposals = self._dump_proposals(we_out.proposals)
+
+        state["work_environment"] = we
+        state["work_environment_reason"] = we_reason
+        state["proposals_work_environment"] = we_proposals
+
+        stage_outputs["work_environment"] = {
+            "work_environment": we,
+            "reason": we_reason,
+            "proposals": we_proposals,
+        }
 
         # 2) HAZARD (HazardOut)
-        hz = parsed.hazard
-        state["hazards"] = self._list_enum_to_names(hz.hazards)
-        state["hazards_reason"] = hz.reason
-        state["proposal_hazard"] = hz.proposal.model_dump() if hz.proposal else None
+        hz_out = parsed.hazard
+        hazards = self._list_enum_to_names(hz_out.hazards)
+        hz_reason = hz_out.reason
+        hz_proposals = self._dump_proposals(hz_out.proposals)
+
+        state["hazards"] = hazards
+        state["hazards_reason"] = hz_reason
+        state["proposals_hazard"] = hz_proposals
+
+        stage_outputs["hazard"] = {
+            "hazards": hazards,
+            "reason": hz_reason,
+            "proposals": hz_proposals,
+        }
 
         # 3) COMPLIANCE (ComplianceOut)
-        cp = parsed.compliance
-        state["required_ppe"] = self._list_enum_to_names(cp.required_ppe)
-        state["required_ppe_reason"] = cp.reason
-        state["proposal_compliance"] = cp.proposal.model_dump() if cp.proposal else None
+        cp_out = parsed.compliance
+        required_ppe = self._list_enum_to_names(cp_out.required_ppe)
+        cp_reason = cp_out.reason
+        cp_proposals = self._dump_proposals(cp_out.proposals)
+
+        state["required_ppe"] = required_ppe
+        state["required_ppe_reason"] = cp_reason
+        state["proposals_compliance"] = cp_proposals
+
+        stage_outputs["compliance"] = {
+            "required_ppe": required_ppe,
+            "reason": cp_reason,
+            "proposals": cp_proposals,
+        }
 
         # 4) WEARING (WearingOut)
         wg = parsed.wearing.model_dump()
-        state["wearing"] = self._normalize_wearing_list(wg.get("wearing", []))
-        state["wearing_reason"] = parsed.wearing.reason
+        wearing = self._normalize_wearing_list(wg.get("wearing", []))
+        wg_reason = parsed.wearing.reason
+
+        state["wearing"] = wearing
+        state["wearing_reason"] = wg_reason
+
+        stage_outputs["wearing"] = {
+            "wearing": wearing,
+            "reason": wg_reason,
+        }
 
         # 5) IMPROPER_WEARING (ImproperWearingOut)
         iw = parsed.improper_wearing.model_dump()
-        state["improper_wearing"] = self._filter_improper_to_worn_only(
-            iw.get("improper_wearing", []),
+        improper_raw = iw.get("improper_wearing", [])
+        improper = self._filter_improper_to_worn_only(
+            improper_raw,
             state.get("wearing", []),
         )
-        state["improper_wearing_reason"] = parsed.improper_wearing.reason
+        iw_reason = parsed.improper_wearing.reason
+
+        state["improper_wearing"] = improper
+        state["improper_wearing_reason"] = iw_reason
+
+        stage_outputs["improper_wearing"] = {
+            "improper_wearing": improper,
+            "reason": iw_reason,
+        }

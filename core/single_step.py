@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import time
 from tqdm.auto import tqdm
 
@@ -39,7 +38,7 @@ class SingleStep(Agent):
             StageEnum.IMPROPER_WEARING,
         ]
 
-        state = {}
+        state = {"stage_outputs": {}}
         logs = []
 
         stem = image_path.stem
@@ -105,7 +104,6 @@ class SingleStep(Agent):
 
             self.update_state(stage, parsed_obj, state)
 
-        # ----- 여기까지 오면 "이미지 1장 완료" -----
         labels_payload = self._make_labels_payload(image_path, split, state)
         self.write_json(labels_path, labels_payload)
 
@@ -120,7 +118,7 @@ class SingleStep(Agent):
         }
         self.write_json(all_final_path, all_payload)
         return all_payload
-    
+
     # -----------------
     # outputs (labels)
     # -----------------
@@ -134,7 +132,7 @@ class SingleStep(Agent):
             "wearing": state.get("wearing", []),
             "improper_wearing": state.get("improper_wearing", []),
         }
-    
+
     # -----------------
     # schema selection (pydantic)
     # -----------------
@@ -150,9 +148,9 @@ class SingleStep(Agent):
         if stage == StageEnum.IMPROPER_WEARING:
             return ImproperWearingOut
         raise ValueError(f"Unknown stage: {stage}")
-    
+
     # -----------------
-    # state update (same as MADE judge outputs)
+    # helpers
     # -----------------
     def _enum_to_name(self, v):
         return v.name if hasattr(v, "name") else v
@@ -168,48 +166,101 @@ class SingleStep(Agent):
                 "worn": it.get("worn"),
             })
         return out
-    
+
+    def _dump_proposals(self, proposals):
+        # proposals는 ProposalOut의 리스트(Pydantic)이며, JSON 저장을 위해 dict로 변환해야 합니다.
+        out = []
+        for p in proposals:
+            out.append(p.model_dump())
+        return out
+
+    # -----------------
+    # state update (MADE judge outputs와 동일한 stage_outputs 구조 생성)
+    # -----------------
     def update_state(self, stage: StageEnum, parsed, state: dict):
-        # WORK_ENVIRONMENT
+        stage_outputs = state["stage_outputs"]
+
         if stage == StageEnum.WORK_ENVIRONMENT:
-            state["work_environment"] = self._enum_to_name(parsed.work_environment)
-            state["work_environment_reason"] = parsed.reason
-            state["proposal_work_environment"] = parsed.proposal.model_dump() if parsed.proposal else None
+            we = self._enum_to_name(parsed.work_environment)
+            reason = parsed.reason
+            proposals = self._dump_proposals(parsed.proposals)
+
+            state["work_environment"] = we
+            state["work_environment_reason"] = reason
+            state["proposals_work_environment"] = proposals
+
+            stage_outputs["work_environment"] = {
+                "work_environment": we,
+                "reason": reason,
+                "proposals": proposals,
+            }
             return
 
-        # HAZARD
         if stage == StageEnum.HAZARD:
-            state["hazards"] = self._list_enum_to_names(parsed.hazards)
-            state["hazards_reason"] = parsed.reason
-            state["proposal_hazard"] = parsed.proposal.model_dump() if parsed.proposal else None
+            hazards = self._list_enum_to_names(parsed.hazards)
+            reason = parsed.reason
+            proposals = self._dump_proposals(parsed.proposals)
+
+            state["hazards"] = hazards
+            state["hazards_reason"] = reason
+            state["proposals_hazard"] = proposals
+
+            stage_outputs["hazard"] = {
+                "hazards": hazards,
+                "reason": reason,
+                "proposals": proposals,
+            }
             return
 
-        # COMPLIANCE
         if stage == StageEnum.COMPLIANCE:
-            state["required_ppe"] = self._list_enum_to_names(parsed.required_ppe)
-            state["required_ppe_reason"] = parsed.reason
-            state["proposal_compliance"] = parsed.proposal.model_dump() if parsed.proposal else None
+            required_ppe = self._list_enum_to_names(parsed.required_ppe)
+            reason = parsed.reason
+            proposals = self._dump_proposals(parsed.proposals)
+
+            state["required_ppe"] = required_ppe
+            state["required_ppe_reason"] = reason
+            state["proposals_compliance"] = proposals
+
+            stage_outputs["compliance"] = {
+                "required_ppe": required_ppe,
+                "reason": reason,
+                "proposals": proposals,
+            }
             return
 
-        # WEARING
         if stage == StageEnum.WEARING:
             d = parsed.model_dump()
-            state["wearing"] = self._normalize_wearing_list(d["wearing"])
-            state["wearing_reason"] = parsed.reason
+            wearing = self._normalize_wearing_list(d["wearing"])
+            reason = parsed.reason
+
+            state["wearing"] = wearing
+            state["wearing_reason"] = reason
+
+            stage_outputs["wearing"] = {
+                "wearing": wearing,
+                "reason": reason,
+            }
             return
 
-        # IMPROPER_WEARING
         if stage == StageEnum.IMPROPER_WEARING:
             d = parsed.model_dump()
-            state["improper_wearing"] = self._filter_improper_to_worn_only(
+            improper = self._filter_improper_to_worn_only(
                 d.get("improper_wearing", []),
                 state.get("wearing", []),
             )
-            state["improper_wearing_reason"] = parsed.reason
+            reason = parsed.reason
+
+            state["improper_wearing"] = improper
+            state["improper_wearing_reason"] = reason
+
+            stage_outputs["improper_wearing"] = {
+                "improper_wearing": improper,
+                "reason": reason,
+            }
             return
 
         raise ValueError(f"Unknown stage in update_state: {stage}")
-    
+
     def _filter_improper_to_worn_only(self, improper_items, wearing_items):
         worn_set = set()
         for it in (wearing_items or []):
