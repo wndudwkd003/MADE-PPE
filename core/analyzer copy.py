@@ -42,6 +42,9 @@ class DisjointSet:
 
 @dataclass
 class ProposalRecord:
+    target_tag: str
+    split: str
+    image_id: str
     proposal_field: str
     proposal_type: str # add, remove, modify ...
     target_from: str
@@ -249,6 +252,7 @@ class Analyzer:
         all_records = []
         num_samples_read = 0
 
+        # export를 위해 “proposal 있는 샘플”을 다시 찾을 수 있게 lookup 구성
         sample_lookup = {}
 
         for path in target_paths:
@@ -259,25 +263,21 @@ class Analyzer:
                 num_samples_read += len(samples)
 
                 for sample in samples:
-                    image_path = sample["image"]
-                    image_id = get_image_id(image_path)
-
+                    image_id = get_image_id(sample["image"])
                     key = (target_tag, split, image_id)
                     sample_lookup[key] = sample
 
-                    recs = self.extract_records(sample)
 
+
+
+
+                    recs = self.extract_records(target_tag, split, sample)
                     if len(recs) > 0:
-                        all_records.append({
-                            "target_tag": target_tag,
-                            "split": split,
-                            "image_id": image_id,
-                            "proposed_records": recs,
-                        })
+                        all_records.extend(recs)
 
-        print(all_records[0])
-        print(f"Total samples read: {num_samples_read}")
-        exit()
+
+
+
 
         plot_counts = self.build_counts(all_records, top_k=self.config.top_k)
         type_keys = list(plot_counts["proposal_type"].keys())
@@ -376,36 +376,46 @@ class Analyzer:
         return summary
 
     # ---------- record extraction ----------
-    def extract_records(self, sample: dict):
+    def extract_records(self, target_tag: str, split: str, sample: dict):
         final_state = sample["final_state"]
         proposals = get_proposal(final_state)
 
         records = []
         for pk, pv in proposals:
             proposal_field = pk[len("proposal_") :]
-            pv_type = pv["type"]
 
-            if pv_type == "add":
-                target_from = ""
+            target_from = pv["target_from"]
+            if target_from == "":
+                base_val = None
 
-            elif pv_type == "modify":
-                target_from = pv.get("target_from") or final_state.get(proposal_field, "")
+                if proposal_field in final_state:
+                    base_val = final_state[proposal_field]
+                elif proposal_field in self.field_to_final_key:
+                    base_key = self.field_to_final_key[proposal_field]
+                    if base_key in final_state:
+                        base_val = final_state[base_key]
 
-            elif pv_type == "remove":
-                target_from = pv.get("target_from") or final_state.get(proposal_field, "")
-
-            else:
-                target_from = pv.get("target_from", "")
+                if base_val is not None:
+                    if isinstance(base_val, list):
+                        target_from = "|".join([str(x) for x in base_val])
+                    else:
+                        target_from = str(base_val)
+                else:
+                    target_from = ""
 
             records.append(
                 ProposalRecord(
+                    target_tag=target_tag,
+                    split=split,
+                    image_id=get_image_id(sample["image"]),
                     proposal_field=proposal_field,
-                    proposal_type=pv_type,
+                    proposal_type=pv["type"],
                     target_from=target_from,
-                    target_to=pv.get("target_to", ""),
-                    proposal_text=pv.get("proposal", ""),
+                    target_to=pv["target_to"],
+                    proposal_text=pv["proposal"],
                 )
             )
+
         return records
 
     # ---------- counters ----------

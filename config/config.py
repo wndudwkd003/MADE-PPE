@@ -26,7 +26,7 @@ ROLE_SEQUENCE = [
 @dataclass
 class Config:
     # LABELING or EVALUATION or ANALYSIS
-    do_mode: DoModeEnum = DoModeEnum.EVALUATION
+    do_mode: DoModeEnum = DoModeEnum.LABELING
 
     dataset: DatasetEnum = DatasetEnum.SH17
     model: ModelEnum = ModelEnum.GPT5_MINI
@@ -41,7 +41,9 @@ class Config:
     seed: int = 42
 
     api_key: str = "config/api_keys.json"
-    max_todo: int = 300  # -1 for all
+    max_todo: int = 50  # -1 for all
+
+    explicit_target_tag: int = 2
 
     temperature: float = 0.7
     top_p: float = 0.9
@@ -67,10 +69,9 @@ class Config:
 
     """
     device: str = "cuda"
+    sentence_emb_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     clip_model: str = "ViT-B-32"
     clip_pretrained: str = "openai"
-
-
     blip_model: str = "Salesforce/blip-itm-base-coco"
     gme_model: str = "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct"
 
