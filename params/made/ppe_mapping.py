@@ -18,7 +18,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W01
     # -------------------------
-    WorkEnvironment.CUTTING_GRINDING_MACHINING_POLISHING: [
+    WorkEnvironment.W01_CUTTING_GRINDING_MACHINING_POLISHING: [
         HazardPPE(
             hazard=HazardFactor.CUTTING,
             ppe=[
@@ -51,7 +51,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W02
     # -------------------------
-    WorkEnvironment.DRILLING_CRUSHING_DEMOLITION_DISMANTLING: [
+    WorkEnvironment.W02_DRILLING_CRUSHING_DEMOLITION_DISMANTLING: [
         HazardPPE(hazard=HazardFactor.DUST, ppe=[PPEItem.DUST_MASK]),
         HazardPPE(hazard=HazardFactor.NOISE, ppe=[PPEItem.HEARING_PROTECTION]),
         HazardPPE(hazard=HazardFactor.VIBRATION, ppe=[PPEItem.ANTI_VIBRATION_GLOVES]),
@@ -63,7 +63,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W03
     # -------------------------
-    WorkEnvironment.WELDING_CUTTING_HOT_WORK: [
+    WorkEnvironment.W03_WELDING_CUTTING_HOT_WORK: [
         HazardPPE(
             hazard=HazardFactor.LIGHTING,  # 아크광/강렬한 광
             ppe=[PPEItem.WELDING_MASK],
@@ -95,7 +95,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W04
     # -------------------------
-    WorkEnvironment.CHEMICAL_HANDLING_MIXING_PAINTING_CLEANING_COATING: [
+    WorkEnvironment.W04_CHEMICAL_HANDLING_MIXING_PAINTING_CLEANING_COATING: [
         HazardPPE(
             hazard=HazardFactor.TOXIC_SUBSTANCE,
             ppe=[
@@ -114,7 +114,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W05
     # -------------------------
-    WorkEnvironment.POWDER_CEMENT_WOODWORKING_ABRASIVE_DUST: [
+    WorkEnvironment.W05_POWDER_CEMENT_WOODWORKING_ABRASIVE_DUST: [
         HazardPPE(hazard=HazardFactor.DUST, ppe=[PPEItem.DUST_MASK]),
         HazardPPE(
             hazard=HazardFactor.IMPACT,
@@ -124,7 +124,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W06
     # -------------------------
-    WorkEnvironment.ELECTRICAL_INSTALLATION_INSPECTION_MAINTENANCE: [
+    WorkEnvironment.W06_ELECTRICAL_INSTALLATION_INSPECTION_MAINTENANCE: [
         HazardPPE(
             hazard=HazardFactor.ELECTRIC_SHOCK,
             ppe=[
@@ -142,7 +142,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W07
     # -------------------------
-    WorkEnvironment.WORKING_AT_HEIGHT_SCAFFOLD_LADDER_OPENINGS_TEMPORARY_WALKWAYS: [
+    WorkEnvironment.W07_WORKING_AT_HEIGHT_SCAFFOLD_LADDER_OPENINGS_TEMPORARY_WALKWAYS: [
         HazardPPE(
             hazard=HazardFactor.FALL,
             ppe=[PPEItem.SAFETY_HARNESS, PPEItem.AB_TYPE_SAFETY_HELMET],
@@ -159,7 +159,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W08
     # -------------------------
-    WorkEnvironment.LIFTING_LOADING_UNLOADING_CRANE: [
+    WorkEnvironment.W08_LIFTING_LOADING_UNLOADING_CRANE: [
         HazardPPE(
             hazard=HazardFactor.IMPACT,
             ppe=[PPEItem.A_TYPE_SAFETY_HELMET, PPEItem.SAFETY_SHOES],
@@ -172,7 +172,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W09
     # -------------------------
-    WorkEnvironment.WORKING_NEAR_MOBILE_EQUIPMENT: [
+    WorkEnvironment.W09_WORKING_NEAR_MOBILE_EQUIPMENT: [
         HazardPPE(
             hazard=HazardFactor.CAUGHT_IN_OR_BETWEEN,
             ppe=[PPEItem.ANTI_PINCH_GLOVES, PPEItem.SAFETY_SHOES],
@@ -189,7 +189,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W10
     # -------------------------
-    WorkEnvironment.ROTATING_MACHINERY_PRESS_CONVEYOR_EQUIPMENT: [
+    WorkEnvironment.W10_ROTATING_MACHINERY_PRESS_CONVEYOR_EQUIPMENT: [
         HazardPPE(
             hazard=HazardFactor.CAUGHT_IN_OR_BETWEEN,
             ppe=[PPEItem.ANTI_PINCH_GLOVES, PPEItem.SAFETY_SHOES],
@@ -202,7 +202,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W11
     # -------------------------
-    WorkEnvironment.CONFINED_SPACE_WORK: [
+    WorkEnvironment.W11_CONFINED_SPACE_WORK: [
         HazardPPE(
             hazard=HazardFactor.CONFINED_SPACE,
             ppe=[PPEItem.AIR_SUPPLIED_RESPIRATOR],
@@ -219,7 +219,7 @@ WORK_ENV_TO_HAZARD_PPE: dict[WorkEnvironment, list[HazardPPE]] = {
     # -------------------------
     # W12
     # -------------------------
-    WorkEnvironment.LOW_TEMPERATURE_COLD_WORK: [
+    WorkEnvironment.W12_LOW_TEMPERATURE_COLD_WORK: [
         HazardPPE(
             hazard=HazardFactor.LOW_TEMPERATURE,
             ppe=[

@@ -4,30 +4,32 @@ from enum import Enum
 
 
 class WorkEnvironment(Enum):
-    CUTTING_GRINDING_MACHINING_POLISHING = "Cutting, grinding, machining, polishing"
-    DRILLING_CRUSHING_DEMOLITION_DISMANTLING = (
+    W01_CUTTING_GRINDING_MACHINING_POLISHING = "Cutting, grinding, machining, polishing"
+    W02_DRILLING_CRUSHING_DEMOLITION_DISMANTLING = (
         "Drilling, crushing, demolition, dismantling"
     )
-    WELDING_CUTTING_HOT_WORK = "Welding, cutting, hot work"
-    CHEMICAL_HANDLING_MIXING_PAINTING_CLEANING_COATING = (
+    W03_WELDING_CUTTING_HOT_WORK = "Welding, cutting, hot work"
+    W04_CHEMICAL_HANDLING_MIXING_PAINTING_CLEANING_COATING = (
         "Chemical handling, mixing, painting, cleaning, coating"
     )
-    POWDER_CEMENT_WOODWORKING_ABRASIVE_DUST = (
+    W05_POWDER_CEMENT_WOODWORKING_ABRASIVE_DUST = (
         "Powder, cement, woodworking, abrasive dust"
     )
-    ELECTRICAL_INSTALLATION_INSPECTION_MAINTENANCE = (
+    W06_ELECTRICAL_INSTALLATION_INSPECTION_MAINTENANCE = (
         "Electrical installation, inspection, maintenance"
     )
-    WORKING_AT_HEIGHT_SCAFFOLD_LADDER_OPENINGS_TEMPORARY_WALKWAYS = (
+    W07_WORKING_AT_HEIGHT_SCAFFOLD_LADDER_OPENINGS_TEMPORARY_WALKWAYS = (
         "Working at height, scaffolding, ladders, openings, temporary walkways"
     )
-    LIFTING_LOADING_UNLOADING_CRANE = "Lifting, loading/unloading, crane operations"
-    WORKING_NEAR_MOBILE_EQUIPMENT = "Working near mobile equipment"
-    ROTATING_MACHINERY_PRESS_CONVEYOR_EQUIPMENT = (
+    W08_LIFTING_LOADING_UNLOADING_CRANE = "Lifting, loading/unloading, crane operations"
+    W09_WORKING_NEAR_MOBILE_EQUIPMENT = "Working near mobile equipment"
+    W10_ROTATING_MACHINERY_PRESS_CONVEYOR_EQUIPMENT = (
         "Rotating machinery, presses, conveyors, equipment work"
     )
-    CONFINED_SPACE_WORK = "Confined space work"
-    LOW_TEMPERATURE_COLD_WORK = "Low-temperature, cold work"
+    W11_CONFINED_SPACE_WORK = "Confined space work"
+    W12_LOW_TEMPERATURE_COLD_WORK = "Low-temperature, cold work"
+
+    W13_OFFICE_MEETINGS_INDOOR = "Office, meetings, indoor"
 
 
 class HazardFactor(Enum):
@@ -45,6 +47,7 @@ class HazardFactor(Enum):
     SLIP = "Slip"
     CAUGHT_IN_OR_BETWEEN = "Caught-in/between"
     LIGHTING = "Lighting"
+    AIRBORNE_PATHOGENS = "Airborne pathogens"
 
 
 class PPEItem(Enum):

@@ -31,9 +31,9 @@ class Config:
     dataset: DatasetEnum = DatasetEnum.SH17
     model: ModelEnum = ModelEnum.GPT5_MINI
 
-    agent: AgentEnum = AgentEnum.SINGLE_STEP
+    agent: AgentEnum = AgentEnum.MADE
 
-    workers: int = 10
+    workers: int = 1
 
     runs: str = "runs"
     datasets_dir: str = "datasets"
@@ -41,7 +41,7 @@ class Config:
     seed: int = 42
 
     api_key: str = "config/api_keys.json"
-    max_todo: int = 300  # -1 for all
+    max_todo: int = 200  # -1 for all
 
     explicit_target_tag: int = 1
 
@@ -68,7 +68,7 @@ class Config:
         - 정확성: 5가지 라벨을 이미지와 직접 비교함 CLIP과 같은 모델 활용
 
     """
-    device: str = "cuda"
+    device: str = "cuda:2"
     sentence_emb_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     clip_model: str = "ViT-B-32"
     clip_pretrained: str = "openai"

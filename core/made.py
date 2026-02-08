@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
+from regex import B
 from tqdm.auto import tqdm
 
 from core.agent import Agent
@@ -44,22 +45,29 @@ class MADE(Agent):
         labels_path = labels_dir / f"{stem}.json"
 
         for stage in stages:
-            # stage 넘어갈 때 텍스트 제거 (프롬프트 부피 줄이기)
-            state.pop("proposer_text", None)
-            state.pop("rebutter_text", None)
+            state["stage_history"] = []
+
             tqdm.write("=" * 50)
             tqdm.write(f"[{image_path.stem}] START STAGE: {stage.name}")
             tqdm.write("=" * 50)
 
             for role, round_idx in role_seq:
-                pack = self.prompt_builder.build(stage=stage, role=role, round_idx=round_idx, state=state)
+                text_format = self.get_text_format(stage, role)
+
+                pack = self.prompt_builder.build(
+                    stage=stage,
+                    role=role,
+                    round_idx=round_idx,
+                    state=state,
+                    text_format=text_format,
+                )
 
                 tqdm.write("-" * 50)
                 tqdm.write(f"[{image_path.stem}] [{stage.name}] [{role.name} r{round_idx}] SYSTEM:\n{pack.system}\n")
                 tqdm.write(f"[{image_path.stem}] [{stage.name}] [{role.name} r{round_idx}] USER:\n{pack.user}\n")
                 tqdm.write("-" * 50)
 
-                text_format = self.get_text_format(stage, role)
+
 
                 t0 = time.time()
                 parsed_obj, last_err = self.api.call_responses(
@@ -110,7 +118,7 @@ class MADE(Agent):
                 tqdm.write("-" * 50)
 
                 # state 업데이트 (proposer_text 단일 키 기준)
-                self.update_state(stage, role, parsed_obj, state)
+                self.update_state(stage, role, round_idx, parsed_obj, state)
 
         # ----- 여기까지 오면 "이미지 1장 완료" -----
         labels_payload = self._make_labels_payload(image_path, split, state)
@@ -170,72 +178,61 @@ class MADE(Agent):
             })
         return out
 
-    def update_state(self, stage, role, parsed, state):
-        if role == RoleEnum.PROPOSER:
-            state["proposer_text"] = parsed.text
+    def update_state(
+        self,
+        stage: StageEnum,
+        role: RoleEnum,
+        round_idx: int,
+        parsed,
+        state: dict
+    ):
+        # 1. 토론 그룹 (Proposer, Rebutter): 대화 맥락을 history에 누적
+        if role in (RoleEnum.PROPOSER, RoleEnum.REBUTTER):
+            if "stage_history" not in state:
+                state["stage_history"] = []
+
+            # 대화 이력 저장 (저지먼트가 읽을 재료)
+            state["stage_history"].append({
+                "round": round_idx,
+                "role": role.name,
+                "text": parsed.text
+            })
             return
 
-        if role == RoleEnum.REBUTTER:
-            state["rebutter_text"] = parsed.text
-            return
+        # 2. 결정 그룹 (Judge): 토론을 종료하고 최종 데이터 확정
+        # 모든 스테이지 공통 저장 항목: 최종 결정 근거(Reason) 및 제안(Proposals)
+        stage_key = stage.name.lower()
+        state[f"{stage_key}_reason"] = parsed.reason
 
+        # 제안(Proposals) 저장
+        if hasattr(parsed, "proposals"):
+            state[f"proposals_{stage_key}"] = [p.model_dump() for p in parsed.proposals]
+
+        # 스테이지별 전용 데이터 추출 로직
         if stage == StageEnum.WORK_ENVIRONMENT:
             state["work_environment"] = self._enum_to_name(parsed.work_environment)
-            state["work_environment_reason"] = parsed.reason
 
-            d = parsed.model_dump()
-            state["proposals_work_environment"] = d.get("proposals", [])
-
-            if "stage_outputs" not in state:
-                state["stage_outputs"] = {}
-            state["stage_outputs"]["work_environment"] = d
-
-            return
-
-        if stage == StageEnum.HAZARD:
+        elif stage == StageEnum.HAZARD:
             state["hazards"] = self._list_enum_to_names(parsed.hazards)
-            state["hazards_reason"] = parsed.reason
 
-            d = parsed.model_dump()
-            state["proposals_hazard"] = d.get("proposals", [])
-
-            if "stage_outputs" not in state:
-                state["stage_outputs"] = {}
-            state["stage_outputs"]["hazard"] = d
-
-            return
-
-        if stage == StageEnum.COMPLIANCE:
+        elif stage == StageEnum.COMPLIANCE:
             state["required_ppe"] = self._list_enum_to_names(parsed.required_ppe)
-            state["required_ppe_reason"] = parsed.reason
 
-            d = parsed.model_dump()
-            state["proposals_compliance"] = d.get("proposals", [])
+        elif stage == StageEnum.WEARING:
+            state["wearing"] = self._normalize_wearing_list(parsed.model_dump().get("wearing", []))
 
-            if "stage_outputs" not in state:
-                state["stage_outputs"] = {}
-            state["stage_outputs"]["compliance"] = d
-
-            return
-
-
-        if stage == StageEnum.WEARING:
-            d = parsed.model_dump()
-            state["wearing"] = self._normalize_wearing_list(d["wearing"])
-            state["wearing_reason"] = parsed.reason
-            return
-
-        if stage == StageEnum.IMPROPER_WEARING:
-            d = parsed.model_dump()
+        elif stage == StageEnum.IMPROPER_WEARING:
+            # 착용(worn=true)된 것들만 필터링하는 기존 로직 유지
+            raw_improper = parsed.model_dump().get("improper_wearing", [])
             state["improper_wearing"] = self._filter_improper_to_worn_only(
-                d.get("improper_wearing", []),
-                state.get("wearing", []),
+                raw_improper,
+                state.get("wearing", [])
             )
 
-            state["improper_wearing_reason"] = parsed.reason
-            return
-
-        raise ValueError(f"Unknown stage in update_state: {stage}")
+        # 디버깅 및 전체 추적용 로그 저장
+        if "stage_outputs" not in state:
+            state["stage_outputs"] = {}
+        state["stage_outputs"][stage_key] = parsed.model_dump()
 
     def _filter_improper_to_worn_only(self, improper_items, wearing_items):
         # wearing_items: [{"ppe": "...", "worn": bool}, ...]
