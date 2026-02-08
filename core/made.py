@@ -37,7 +37,7 @@ class MADE(Agent):
         ]
         role_seq = cfg.role_sequence
 
-        state = {}
+        state = {"stage_outputs": {}}
         logs = []
 
         stem = image_path.stem
@@ -186,12 +186,7 @@ class MADE(Agent):
         parsed,
         state: dict
     ):
-        # 1. 토론 그룹 (Proposer, Rebutter): 대화 맥락을 history에 누적
         if role in (RoleEnum.PROPOSER, RoleEnum.REBUTTER):
-            if "stage_history" not in state:
-                state["stage_history"] = []
-
-            # 대화 이력 저장 (저지먼트가 읽을 재료)
             state["stage_history"].append({
                 "round": round_idx,
                 "role": role.name,
@@ -199,10 +194,9 @@ class MADE(Agent):
             })
             return
 
-        # 2. 결정 그룹 (Judge): 토론을 종료하고 최종 데이터 확정
-        # 모든 스테이지 공통 저장 항목: 최종 결정 근거(Reason) 및 제안(Proposals)
         stage_key = stage.name.lower()
         state[f"{stage_key}_reason"] = parsed.reason
+        d = parsed.model_dump()
 
         # 제안(Proposals) 저장
         if hasattr(parsed, "proposals"):
@@ -219,35 +213,29 @@ class MADE(Agent):
             state["required_ppe"] = self._list_enum_to_names(parsed.required_ppe)
 
         elif stage == StageEnum.WEARING:
-            state["wearing"] = self._normalize_wearing_list(parsed.model_dump().get("wearing", []))
+            state["wearing"] = self._normalize_wearing_list(d.get("wearing", []))
 
         elif stage == StageEnum.IMPROPER_WEARING:
             # 착용(worn=true)된 것들만 필터링하는 기존 로직 유지
-            raw_improper = parsed.model_dump().get("improper_wearing", [])
+            raw_improper = d.get("improper_wearing", [])
             state["improper_wearing"] = self._filter_improper_to_worn_only(
                 raw_improper,
                 state.get("wearing", [])
             )
 
-        # 디버깅 및 전체 추적용 로그 저장
-        if "stage_outputs" not in state:
-            state["stage_outputs"] = {}
-        state["stage_outputs"][stage_key] = parsed.model_dump()
+        state["stage_outputs"][stage_key] = d
 
     def _filter_improper_to_worn_only(self, improper_items, wearing_items):
-        # wearing_items: [{"ppe": "...", "worn": bool}, ...]
         worn_set = set()
         for it in (wearing_items or []):
             ppe = it.get("ppe")
             if ppe and bool(it.get("worn")):
                 worn_set.add(ppe)
-
         out = []
         for it in (improper_items or []):
             ppe = self._enum_to_name(it.get("ppe"))
             if not ppe:
                 continue
-            # 착용한 PPE만 improper 목록에 남김
             if ppe in worn_set:
                 out.append({"ppe": ppe, "worn": bool(it.get("worn"))})
         return out

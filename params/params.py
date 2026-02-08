@@ -5,6 +5,7 @@ from enum import Enum
 
 class DatasetEnum(Enum):
     SH17 = "SH17"
+    SCP300 = "SCP300"
 
 
 class AgentEnum(Enum):

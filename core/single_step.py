@@ -1,5 +1,3 @@
-# core/single_step.py
-
 from __future__ import annotations
 
 import time
@@ -15,16 +13,13 @@ from params.output_schema import (
     ImproperWearingOut,
 )
 
+from utils.prompt_builder_single_step import SingleStepPromptBuilder
 
 class SingleStep(Agent):
-    """
-    Stage별 single agent 1회 호출로 최종 스키마 출력 생성.
-    - output schema는 MADE의 Judge 출력과 동일하게 유지하여 공정 비교가 가능하도록 함.
-    """
+
 
     def __init__(self, config):
         super().__init__(config)
-        from utils.prompt_builder_single_step import SingleStepPromptBuilder
         self.prompt_builder = SingleStepPromptBuilder()
 
     def run_one_image(self, image_file_id, image_path, split, all_dir, labels_dir, errors_jsonl):
@@ -50,14 +45,16 @@ class SingleStep(Agent):
             tqdm.write(f"[{image_path.stem}] SINGLE_STEP START STAGE: {stage.name}")
             tqdm.write("=" * 50)
 
-            pack = self.prompt_builder.build(stage=stage, state=state)
+            # 1. TextFormat(Schema) 먼저 가져오기 (PromptBuilder에 필요)
+            text_format = self.get_text_format(stage)
+
+            # 2. Prompt Build (text_format 인자 추가)
+            pack = self.prompt_builder.build(stage=stage, state=state, text_format=text_format)
 
             tqdm.write("-" * 50)
             tqdm.write(f"[{image_path.stem}] [{stage.name}] SYSTEM:\n{pack.system}\n")
             tqdm.write(f"[{image_path.stem}] [{stage.name}] USER:\n{pack.user}\n")
             tqdm.write("-" * 50)
-
-            text_format = self.get_text_format(stage)
 
             t0 = time.time()
             parsed_obj, last_err = self.api.call_responses(
@@ -102,8 +99,10 @@ class SingleStep(Agent):
             tqdm.write(f"[{image_path.stem}] [{stage.name}] PARSED:\n{parsed_obj.model_dump()}\n")
             tqdm.write("-" * 50)
 
+            # 3. State Update
             self.update_state(stage, parsed_obj, state)
 
+        # 4. Final Payload Generation
         labels_payload = self._make_labels_payload(image_path, split, state)
         self.write_json(labels_path, labels_payload)
 
@@ -156,11 +155,17 @@ class SingleStep(Agent):
         return v.name if hasattr(v, "name") else v
 
     def _list_enum_to_names(self, xs):
+        # xs가 None인 경우 빈 리스트 반환 (안전 장치)
+        if xs is None:
+            return []
         return [self._enum_to_name(x) for x in xs]
 
     def _normalize_wearing_list(self, items):
+        if not items:
+            return []
         out = []
         for it in items:
+            # it는 dict 형태 (wearing list 내부 item)
             out.append({
                 "ppe": self._enum_to_name(it.get("ppe")),
                 "worn": it.get("worn"),
@@ -168,98 +173,76 @@ class SingleStep(Agent):
         return out
 
     def _dump_proposals(self, proposals):
-        # proposals는 ProposalOut의 리스트(Pydantic)이며, JSON 저장을 위해 dict로 변환해야 합니다.
+        """
+        proposals는 ProposalOut 객체의 리스트(Pydantic)일 수도 있고,
+        이미 dict 리스트일 수도 있음(드물지만).
+        안전하게 처리.
+        """
+        if not proposals:
+            return []
         out = []
         for p in proposals:
-            out.append(p.model_dump())
+            if hasattr(p, "model_dump"):
+                out.append(p.model_dump())
+            elif isinstance(p, dict):
+                out.append(p)
+            else:
+                # Fallback
+                out.append(str(p))
         return out
 
     # -----------------
     # state update (MADE judge outputs와 동일한 stage_outputs 구조 생성)
     # -----------------
     def update_state(self, stage: StageEnum, parsed, state: dict):
-        stage_outputs = state["stage_outputs"]
+        d = parsed.model_dump()
+        reason = parsed.reason
+
+        stage_key = stage.name.lower()
+        proposals = []
+        if hasattr(parsed, "proposals"):
+            proposals = self._dump_proposals(parsed.proposals)
 
         if stage == StageEnum.WORK_ENVIRONMENT:
             we = self._enum_to_name(parsed.work_environment)
-            reason = parsed.reason
-            proposals = self._dump_proposals(parsed.proposals)
-
             state["work_environment"] = we
             state["work_environment_reason"] = reason
             state["proposals_work_environment"] = proposals
-
-            stage_outputs["work_environment"] = {
-                "work_environment": we,
-                "reason": reason,
-                "proposals": proposals,
-            }
             return
 
         if stage == StageEnum.HAZARD:
             hazards = self._list_enum_to_names(parsed.hazards)
-            reason = parsed.reason
-            proposals = self._dump_proposals(parsed.proposals)
-
             state["hazards"] = hazards
             state["hazards_reason"] = reason
             state["proposals_hazard"] = proposals
-
-            stage_outputs["hazard"] = {
-                "hazards": hazards,
-                "reason": reason,
-                "proposals": proposals,
-            }
             return
 
         if stage == StageEnum.COMPLIANCE:
             required_ppe = self._list_enum_to_names(parsed.required_ppe)
-            reason = parsed.reason
-            proposals = self._dump_proposals(parsed.proposals)
-
             state["required_ppe"] = required_ppe
             state["required_ppe_reason"] = reason
             state["proposals_compliance"] = proposals
-
-            stage_outputs["compliance"] = {
-                "required_ppe": required_ppe,
-                "reason": reason,
-                "proposals": proposals,
-            }
             return
 
         if stage == StageEnum.WEARING:
-            d = parsed.model_dump()
-            wearing = self._normalize_wearing_list(d["wearing"])
-            reason = parsed.reason
-
+            wearing = self._normalize_wearing_list(d.get("wearing", []))
             state["wearing"] = wearing
             state["wearing_reason"] = reason
-
-            stage_outputs["wearing"] = {
-                "wearing": wearing,
-                "reason": reason,
-            }
             return
 
         if stage == StageEnum.IMPROPER_WEARING:
-            d = parsed.model_dump()
+            raw_improper = d.get("improper_wearing", [])
             improper = self._filter_improper_to_worn_only(
-                d.get("improper_wearing", []),
+                raw_improper,
                 state.get("wearing", []),
             )
-            reason = parsed.reason
-
             state["improper_wearing"] = improper
             state["improper_wearing_reason"] = reason
-
-            stage_outputs["improper_wearing"] = {
-                "improper_wearing": improper,
-                "reason": reason,
-            }
             return
 
-        raise ValueError(f"Unknown stage in update_state: {stage}")
+
+        state["stage_outputs"][stage_key] = d
+
 
     def _filter_improper_to_worn_only(self, improper_items, wearing_items):
         worn_set = set()
@@ -267,7 +250,6 @@ class SingleStep(Agent):
             ppe = it.get("ppe")
             if ppe and bool(it.get("worn")):
                 worn_set.add(ppe)
-
         out = []
         for it in (improper_items or []):
             ppe = self._enum_to_name(it.get("ppe"))
