@@ -110,7 +110,7 @@ class SingleStepPromptBuilder:
             return f"- PPEItem: {self.ppe_keys}\n- Boolean: true/false"
         raise ValueError(f"unknown stage: {stage}")
 
-    def proposal_policy_block(self) -> str:
+    def proposal_policy_block(self):
         return (
             "Proposal policy (for label-set / mapping-table changes):\n"
             "\n"
@@ -119,6 +119,7 @@ class SingleStepPromptBuilder:
             "\n"
             "Each item in proposals must match ProposalOut:\n"
             "- flag: must be true for every proposal item in the list\n"
+            "\n"
             "- kind: choose EXACTLY ONE of the following (string):\n"
             "  - label | mapping\n"
             "\n"
@@ -133,6 +134,11 @@ class SingleStepPromptBuilder:
             "  - add:    target_from=\"\" and target_to=\"NEW_KEY\"\n"
             "  - remove: target_from=\"EXISTING_KEY\" and target_to=\"\"\n"
             "  - modify: target_from=\"EXISTING_KEY\" and target_to=\"NEW_KEY\"\n"
+            "\n"
+            "- What 'label' proposals mean (kind=label):\n"
+            "  - You are proposing to change the allowed label set itself.\n"
+            "  - This includes adding/removing/modifying PPEItem keys (i.e., entirely new PPE types are allowed here).\n"
+            "  - For kind=label, set scope.work_environment=\"\" and scope.hazard=\"\".\n"
             "\n"
             "- scope rules (only for kind=mapping):\n"
             "  - subject=we_to_hazard:\n"
@@ -150,12 +156,13 @@ class SingleStepPromptBuilder:
             "\n"
             "- proposal: short, evidence-based reason\n"
             "\n"
-            "- IMPORTANT:\n"
-            "  - If you propose adding a new label (kind=label, type=add), you should also include\n"
-            "    at least one mapping proposal (kind=mapping) that connects the new label so it is not isolated.\n"
-            "  - If your mapping proposal introduces a new hazard/ppe key that does not exist yet,\n"
-            "    include the corresponding kind=label add proposal for that hazard/ppe as well.\n"
-
+            "- IMPORTANT consistency rules:\n"
+            "  - If you propose adding a new label (kind=label, type=add), also add at least one mapping proposal\n"
+            "    (kind=mapping) that connects the new label so it is not isolated.\n"
+            "  - If your mapping proposal uses a hazard/ppe key that does not exist in the current label set,\n"
+            "    also include the corresponding kind=label add proposal for that hazard/ppe key.\n"
+            "  - If the hazard/ppe key already exists in the current label set, do NOT write a kind=label proposal for it;\n"
+            "    write only the required kind=mapping proposal(s).\n"
         )
 
 

@@ -1,247 +1,62 @@
-# core/analyzer.py
-
-from __future__ import annotations
-
 import json
-import re
-import random
-import shutil
-from dataclasses import dataclass
+import matplotlib.pyplot as plt
+import seaborn as sns
+from dataclasses import dataclass, asdict
 from datetime import datetime
-from math import sqrt
 from pathlib import Path
 from collections import Counter, defaultdict
+from typing import Any, Dict, List, Tuple
 
+import numpy as np
+import pandas as pd
+from wordcloud import WordCloud
+from sklearn.cluster import KMeans
+from sklearn.metrics import pairwise_distances_argmin_min, silhouette_score
+from sklearn.manifold import TSNE
 from sentence_transformers import SentenceTransformer
-from scipy.stats import chi2_contingency, fisher_exact
+from scipy.stats import chi2_contingency
 
 from config.config import Config
 from utils.eval_utils import get_test_targets, get_all_samples, get_image_id
-from utils.analysis_utils import get_proposal
-
-
-SCIPY_AVAILABLE = True
-
-
-class DisjointSet:
-    def __init__(self, n: int):
-        self.parent = list(range(n))
-
-    def find(self, x: int):
-        while self.parent[x] != x:
-            self.parent[x] = self.parent[self.parent[x]]
-            x = self.parent[x]
-        return x
-
-    def union(self, a: int, b: int):
-        ra = self.find(a)
-        rb = self.find(b)
-        if ra != rb:
-            self.parent[rb] = ra
-
 
 @dataclass
 class ProposalRecord:
     target_tag: str
     split: str
     image_id: str
-    proposal_field: str
-    proposal_type: str # add, remove, modify ...
+
+    stage: str          # work_environment | hazard | compliance
+    kind: str           # label | mapping
+    subject: str        # work_environment|hazard|ppe | we_to_hazard|we_hazard_to_ppe
+    proposal_type: str  # add | remove | modify
+
     target_from: str
     target_to: str
     proposal_text: str
+
+    scope_work_environment: str
+    scope_hazard: str
 
 
 class Analyzer:
     def __init__(self, config: Config):
         self.config = config
-
         self.embed_model = SentenceTransformer(
             config.sentence_emb_model,
             device=config.device,
         )
 
-        self.stopwords = {
-            "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "while",
-            "is", "are", "was", "were", "be", "been", "being",
-            "this", "that", "these", "those",
-            "it", "its", "they", "them", "their", "there",
-            "of", "to", "in", "on", "for", "with", "as", "at", "by", "from", "into",
-            "not", "no", "nor",
-            "image", "depicts", "shows", "scene", "environment", "category", "labels", "covered", "current",
-        }
+        self.save_dir = (
+            Path(self.config.eval_runs) /
+            "analysis" /
+            str(self.config.dataset.name) /
+            str(self.config.agent.name)
+        )
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        plt.style.use('ggplot')
 
-        # proposal_field -> final_state key 매핑(필요 최소만)
-        self.field_to_final_key = {
-            "work_environment": "work_environment",
-            "hazards": "hazards",
-            "hazard": "hazards",
-            "required_ppe": "required_ppe",
-            "compliance": "compliance",
-        }
-
-    # ---------- small helpers ----------
-    def densify_grouped(self, grouped: dict, type_keys: list[str]):
-        out = {}
-        for group_key, score_map in grouped.items():
-            fixed = dict(score_map)
-            for t in type_keys:
-                if t not in fixed:
-                    fixed[t] = 0
-            out[group_key] = fixed
-        return out
-
-    def transition_to_text(self, s: str):
-        # "A -> B" 를 자연어로 바꿔 embedding 품질을 올림
-        if "->" in s:
-            left, right = s.split("->", 1)
-            left = left.strip().replace("_", " ").lower()
-            right = right.strip().replace("_", " ").lower()
-            return f"{left} to {right}"
-        return s.replace("_", " ").lower()
-
-    def cosine_similarity(self, a, b):
-        dot = 0.0
-        na = 0.0
-        nb = 0.0
-        for i in range(len(a)):
-            va = float(a[i])
-            vb = float(b[i])
-            dot += va * vb
-            na += va * va
-            nb += vb * vb
-        if na == 0.0 or nb == 0.0:
-            return 0.0
-        return dot / ((na ** 0.5) * (nb ** 0.5))
-
-    def pick_more_specific(self, items: list[str]):
-        # “명확한쪽” = 더 구체적/정보가 많은쪽을 대표로 선택
-        best = items[0]
-        best_score = -1.0
-        for s in items:
-            tokens = [t for t in s.split("_") if t]
-            score = float(len(tokens)) * 10.0 + float(len(s))
-            if score > best_score:
-                best_score = score
-                best = s
-        return best
-
-    def merge_similar_text_counts(self, count_map: dict[str, int], threshold: float):
-        keys = list(count_map.keys())
-        if len(keys) == 0:
-            return {}, {"clusters": [], "threshold": float(threshold)}
-
-        texts = [self.transition_to_text(k) for k in keys]
-        embs = self.embed_model.encode(texts, normalize_embeddings=False)
-
-        dsu = DisjointSet(len(keys))
-
-        for i in range(len(keys)):
-            ei = embs[i]
-            for j in range(i + 1, len(keys)):
-                sim = self.cosine_similarity(ei, embs[j])
-                if sim >= threshold:
-                    dsu.union(i, j)
-
-        clusters = {}
-        for i in range(len(keys)):
-            r = dsu.find(i)
-            if r in clusters:
-                clusters[r].append(i)
-            else:
-                clusters[r] = [i]
-
-        merged = {}
-        debug_clusters = []
-
-        for _, idxs in clusters.items():
-            members = [keys[i] for i in idxs]
-            rep = self.pick_more_specific(members)
-
-            total = 0
-            for m in members:
-                total += int(count_map[m])
-
-            merged[rep] = int(total)
-            debug_clusters.append(
-                {
-                    "representative": rep,
-                    "members": members,
-                    "total_count": int(total),
-                }
-            )
-
-        merged_items = sorted(merged.items(), key=lambda x: x[1], reverse=True)
-        merged = {k: int(v) for k, v in merged_items}
-
-        return merged, {"clusters": debug_clusters, "threshold": float(threshold)}
-
-    # ---------- export ----------
-    def export_flagged_samples(self, grouped_samples: dict, sample_lookup: dict):
-        """
-        proposal이 있는 샘플만 eval_runs 아래로 이미지+json 재저장.
-        - grouped_samples: {(target_tag, split, image_id): [ProposalRecord, ...]}
-        - sample_lookup:  {(target_tag, split, image_id): sample_dict}
-        """
-        root = Path(self.config.eval_runs) / "proposal_exports" / str(self.config.dataset) / str(self.config.agent)
-
-        jsonl_by_split = defaultdict(list)
-
-        for key, recs in grouped_samples.items():
-            target_tag, split, image_id = key
-
-            if len(recs) == 0:
-                continue
-
-            sample = sample_lookup[key]
-            image_src = Path(sample["image"])
-
-            dst_dir = root / str(target_tag) / str(split) / str(image_id)
-            dst_dir.mkdir(parents=True, exist_ok=True)
-
-            # image copy
-            dst_image = dst_dir / image_src.name
-            shutil.copy2(str(image_src), str(dst_image))
-
-            # json per sample
-            payload = {
-                "target_tag": target_tag,
-                "split": split,
-                "image_id": image_id,
-                "image_src": str(image_src),
-                "image_dst": str(dst_image),
-                "num_proposals": int(len(recs)),
-                "proposals": [
-                    {
-                        "proposal_field": r.proposal_field,
-                        "proposal_type": r.proposal_type,
-                        "target_from": r.target_from,
-                        "target_to": r.target_to,
-                        "proposal_text": r.proposal_text,
-                    }
-                    for r in recs
-                ],
-            }
-
-            with open(dst_dir / "sample.json", "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-
-            jsonl_by_split[(target_tag, split)].append(payload)
-
-        # split별 jsonl 저장(한 파일로 보기 편하게)
-        for (target_tag, split), rows in jsonl_by_split.items():
-            out_dir = root / str(target_tag) / str(split)
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-            with open(out_dir / "samples.jsonl", "w", encoding="utf-8") as f:
-                for row in rows:
-                    f.write(json.dumps(row, ensure_ascii=False))
-                    f.write("\n")
-
-    # ---------- public ----------
     def run(self):
         started_at = datetime.now().isoformat(timespec="seconds")
-
         target_paths = get_test_targets(
             agent=self.config.agent,
             dataset=self.config.dataset,
@@ -249,487 +64,332 @@ class Analyzer:
             run_dir=self.config.runs,
         )
 
-        all_records = []
-        num_samples_read = 0
-
-        # export를 위해 “proposal 있는 샘플”을 다시 찾을 수 있게 lookup 구성
-        sample_lookup = {}
-
+        all_records: List[ProposalRecord] = []
         for path in target_paths:
             target_tag = path.name
             samples_by_split = get_all_samples(path)
-
             for split, samples in samples_by_split.items():
-                num_samples_read += len(samples)
-
                 for sample in samples:
-                    image_id = get_image_id(sample["image"])
-                    key = (target_tag, split, image_id)
-                    sample_lookup[key] = sample
+                    recs = self.extract_records(sample, target_tag, split)
+                    all_records.extend(recs)
 
+        if not all_records: return
 
-
-
-
-                    recs = self.extract_records(target_tag, split, sample)
-                    if len(recs) > 0:
-                        all_records.extend(recs)
-
-
-
-
-
-        plot_counts = self.build_counts(all_records, top_k=self.config.top_k)
-        type_keys = list(plot_counts["proposal_type"].keys())
-
-        merged_transitions, merged_transitions_debug = self.merge_similar_text_counts(
-            plot_counts["top_transitions"],
-            threshold=0.86,
-        )
-
-        grouped_target_type = self.densify_grouped(
-            self.grouped_by_target_type(all_records),
-            type_keys,
-        )
-        grouped_field_type = self.densify_grouped(
-            self.grouped_by_field_type(all_records),
-            type_keys,
-        )
-
-        terms_all = self.top_terms(all_records, top_k=30)
-        examples_all = self.sample_examples(all_records, n=30, seed=self.config.seed)
-
-        by_type = defaultdict(list)
+        records_by_split = defaultdict(list)
         for r in all_records:
-            by_type[r.proposal_type].append(r)
+            records_by_split[r.split].append(r)
 
-        type_summaries = {}
-        for t, recs in by_type.items():
-            type_summaries[t] = {
-                "count": int(len(recs)),
-                "top_terms": self.top_terms(recs, top_k=15),
-                "examples": self.sample_examples(recs, n=10, seed=self.config.seed + 7),
-            }
-
-        infer = self.analyze_inferential(all_records)
-
-        grouped_samples = self.group_records_by_sample(all_records)
-        sample_units = list(grouped_samples.values())
-
-        ci_add = self.bootstrap_ci_for_share(sample_units, "add_share", iters=2000, seed=self.config.seed)
-        ci_any = self.bootstrap_ci_for_share(sample_units, "has_any_proposal_rate", iters=2000, seed=self.config.seed + 11)
-
-        per_target_samples = defaultdict(list)
-        for (target_tag, _split, _image_id), recs in grouped_samples.items():
-            per_target_samples[target_tag].append(recs)
-
-        ci_by_target = {}
-        for target_tag, units in per_target_samples.items():
-            ci_by_target[target_tag] = {
-                "add_share": self.bootstrap_ci_for_share(units, "add_share", iters=2000, seed=self.config.seed + 101),
-                "has_any_proposal_rate": self.bootstrap_ci_for_share(units, "has_any_proposal_rate", iters=2000, seed=self.config.seed + 202),
-            }
-
-        # proposal 있는 샘플 export
-        self.export_flagged_samples(grouped_samples, sample_lookup)
-
-        summary = {
-            "counts": {
-                "num_samples_read": int(num_samples_read),
-                "num_flagged_proposal_records": int(len(all_records)),
-                "num_sample_units": int(len(sample_units)),
-            },
-            "descriptive": {
-                "proposal_type_counts": plot_counts["proposal_type"],
-                "proposal_field_counts": plot_counts["proposal_field"],
-                "top_transitions": merged_transitions,
-                "top_from": plot_counts["top_from"],
-                "top_to": plot_counts["top_to"],
-            },
-            "merge": {
-                "top_transitions_semantic": merged_transitions_debug,
-            },
-            "grouped": {
-                "by_target_type": grouped_target_type,
-                "by_field_type": grouped_field_type,
-                "type_keys": type_keys,
-            },
-            "text": {
-                "top_terms_all": terms_all,
-                "examples_all": examples_all,
-                "by_type": type_summaries,
-            },
-            "inferential": infer,
-            "bootstrap_ci": {
-                "overall_add_share": ci_add,
-                "overall_has_any_proposal_rate": ci_any,
-                "by_target": ci_by_target,
-            },
+        final_report = {
             "meta": {
                 "started_at": started_at,
-                "finished_at": datetime.now().isoformat(timespec="seconds"),
-                "scipy_available": SCIPY_AVAILABLE,
-                "export_dir": str(Path(self.config.eval_runs) / "proposal_exports" / str(self.config.dataset) / str(self.config.agent)),
+                "total_proposals": len(all_records),
+                "splits": list(records_by_split.keys())
             },
+            "split_analysis": {}
         }
 
-        return summary
+        for split, split_recs in records_by_split.items():
+            desc = self.perform_descriptive_analysis(split_recs)
+            # 의미론적 분석 수행 (Type별 분석 포함)
+            sem_results, sem_embeddings = self.perform_semantic_analysis(split_recs)
 
-    # ---------- record extraction ----------
-    def extract_records(self, target_tag: str, split: str, sample: dict):
+            self.visualize_descriptive(desc, split)
+            self.visualize_semantic_all(sem_results, sem_embeddings, split)
+            self.visualize_wordcloud(split_recs, split)
+
+            final_report["split_analysis"][split] = {
+                "descriptive": desc,
+                "semantic": sem_results
+            }
+
+        final_report["inferential_analysis"] = self.perform_inferential_analysis(all_records)
+        final_report["meta"]["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+        json_path = self.save_dir / "analysis_report.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(final_report, f, indent=4, ensure_ascii=False)
+
+        return json_path
+
+    def extract_records(self, sample: dict, target_tag: str, split: str) -> List[ProposalRecord]:
         final_state = sample["final_state"]
-        proposals = get_proposal(final_state)
+        image_id = get_image_id(sample["image"])
+
+        stage_keys = ["work_environment", "hazard", "compliance"]
 
         records = []
-        for pk, pv in proposals:
-            proposal_field = pk[len("proposal_") :]
+        for stage in stage_keys:
+            stage_outputs = final_state.get("stage_outputs", {})
+            stage_out = stage_outputs.get(stage)
+            if not stage_out:
+                continue
+            proposals = stage_out.get("proposals", [])
+            for p in proposals:
+                if p["flag"] is not True:
+                    continue
 
-            target_from = pv["target_from"]
-            if target_from == "":
-                base_val = None
+                scope = p["scope"]
+                scope_we = scope["work_environment"]
+                scope_hz = scope["hazard"]
 
-                if proposal_field in final_state:
-                    base_val = final_state[proposal_field]
-                elif proposal_field in self.field_to_final_key:
-                    base_key = self.field_to_final_key[proposal_field]
-                    if base_key in final_state:
-                        base_val = final_state[base_key]
+                p_type = p["type"]
+                t_from = p["target_from"]
+                t_to = p["target_to"]
 
-                if base_val is not None:
-                    if isinstance(base_val, list):
-                        target_from = "|".join([str(x) for x in base_val])
+                if p_type == "add":
+                    if t_from == "":
+                        t_from_norm = "EMPTY"
                     else:
-                        target_from = str(base_val)
+                        t_from_norm = t_from.strip()
                 else:
-                    target_from = ""
+                    t_from_norm = t_from.strip()
 
-            records.append(
-                ProposalRecord(
-                    target_tag=target_tag,
-                    split=split,
-                    image_id=get_image_id(sample["image"]),
-                    proposal_field=proposal_field,
-                    proposal_type=pv["type"],
-                    target_from=target_from,
-                    target_to=pv["target_to"],
-                    proposal_text=pv["proposal"],
+                records.append(
+                    ProposalRecord(
+                        target_tag=target_tag,
+                        split=split,
+                        image_id=image_id,
+
+                        stage=stage,
+                        kind=p["kind"],
+                        subject=p["subject"],
+                        proposal_type=p_type,
+
+                        target_from=t_from_norm,
+                        target_to=t_to.strip(),
+                        proposal_text=p["proposal"],
+
+                        scope_work_environment=scope_we.strip(),
+                        scope_hazard=scope_hz.strip(),
+                    )
                 )
-            )
 
         return records
 
-    # ---------- counters ----------
-    def build_counts(self, records: list[ProposalRecord], top_k: int):
-        type_counter = Counter(r.proposal_type for r in records if r.proposal_type)
-        field_counter = Counter(r.proposal_field for r in records if r.proposal_field)
-        from_counter = Counter(r.target_from for r in records if r.target_from)
-        to_counter = Counter(r.target_to for r in records if r.target_to)
-        trans_counter = Counter(
-            f"{r.target_from} -> {r.target_to}"
-            for r in records
-            if r.target_from or r.target_to
-        )
+
+    def perform_descriptive_analysis(self, records: List[ProposalRecord]):
+        label_results = defaultdict(lambda: defaultdict(Counter))
+        we_to_hazard_results = defaultdict(lambda: defaultdict(Counter))
+        we_hazard_to_ppe_results = defaultdict(lambda: defaultdict(Counter))
+
+        for r in records:
+            if r.kind == "label":
+                key = r.subject
+                label_results[key][r.proposal_type][(r.target_from, r.target_to)] += 1
+                continue
+
+            if r.kind == "mapping" and r.subject == "we_to_hazard":
+                key = r.scope_work_environment if r.scope_work_environment else "(missing_we)"
+                we_to_hazard_results[key][r.proposal_type][(r.target_from, r.target_to)] += 1
+                continue
+
+            if r.kind == "mapping" and r.subject == "we_hazard_to_ppe":
+                we_key = r.scope_work_environment if r.scope_work_environment else "(missing_we)"
+                hz_key = r.scope_hazard if r.scope_hazard else "(missing_hazard)"
+
+                # 기존: key = (we_key, hz_key)  # tuple -> JSON dump 실패
+                # 변경: 문자열 키로 직렬화 가능하게 만듦
+                key = f"{we_key} || {hz_key}"
+
+                we_hazard_to_ppe_results[key][r.proposal_type][(r.target_from, r.target_to)] += 1
+                continue
 
         return {
-            "proposal_type": dict(type_counter.most_common()),
-            "proposal_field": dict(field_counter.most_common()),
-            "top_transitions": dict(trans_counter.most_common(top_k)),
-            "top_from": dict(from_counter.most_common(top_k)),
-            "top_to": dict(to_counter.most_common(top_k)),
+            "label": self.format_topk(label_results, self.config.top_k),
+            "mapping": {
+                "we_to_hazard": self.format_topk(we_to_hazard_results, self.config.top_k),
+                "we_hazard_to_ppe": self.format_topk(we_hazard_to_ppe_results, self.config.top_k),
+            },
         }
 
-    def grouped_by_target_type(self, records: list[ProposalRecord]):
-        per_target = defaultdict(Counter)
-        for r in records:
-            if r.target_tag and r.proposal_type:
-                per_target[r.target_tag][r.proposal_type] += 1
-        return {k: dict(v) for k, v in per_target.items()}
 
-    def grouped_by_field_type(self, records: list[ProposalRecord]):
-        per_field = defaultdict(Counter)
-        for r in records:
-            if r.proposal_field and r.proposal_type:
-                per_field[r.proposal_field][r.proposal_type] += 1
-        return {k: dict(v) for k, v in per_field.items()}
 
-    # ---------- text ----------
-    def tokenize(self, text: str):
-        t = text.lower()
-        t = re.sub(r"[^a-z0-9]+", " ", t)
-        parts = t.split()
+    def format_topk(self, grouped_counts, top_k: int):
+        """
+        grouped_counts 구조(현재 코드 기준):
+          grouped_counts[group_key][proposal_type] = Counter({(from, to): count, ...})
 
-        out = []
-        for p in parts:
-            if p in self.stopwords:
-                continue
-            if len(p) <= 2:
-                continue
-            out.append(p)
+        반환 구조:
+          out[group_key][proposal_type] = [
+            {"from": ..., "to": ..., "count": ...},
+            ...
+          ]  # count 내림차순 top_k
+        """
+        out = {}
+
+        for group_key, type_to_counter in grouped_counts.items():
+            out[group_key] = {}
+
+            for proposal_type, counter in type_to_counter.items():
+                rows = []
+                for (t_from, t_to), c in counter.most_common(top_k):
+                    rows.append({
+                        "from": t_from,
+                        "to": t_to,
+                        "count": int(c),
+                    })
+                out[group_key][proposal_type] = rows
+
         return out
 
-    def top_terms(self, records: list[ProposalRecord], top_k: int):
-        counter = Counter()
+
+    def perform_semantic_analysis(self, records: List[ProposalRecord], max_k: int = 10) -> Tuple[Dict, Dict]:
+        subject_groups = defaultdict(list)
         for r in records:
-            if r.proposal_text:
-                counter.update(self.tokenize(r.proposal_text))
-        items = counter.most_common(top_k)
-        return [{"term": term, "count": int(cnt)} for term, cnt in items]
+            if r.kind != "label":
+                continue
+            subject_groups[r.subject].append(r)
 
-    def sample_examples(self, records: list[ProposalRecord], n: int, seed: int):
-        rnd = random.Random(seed)
-        if len(records) == 0:
-            return []
+        analysis_by_subject = {}
+        embeddings_by_subject = {}
 
-        idxs = list(range(len(records)))
-        rnd.shuffle(idxs)
-        idxs = idxs[:n]
+        for subject, s_recs in subject_groups.items():
+            all_labels = set()
+            for r in s_recs:
+                if r.target_to:
+                    all_labels.add(r.target_to.upper())
+                if r.target_from and r.target_from != "EMPTY":
+                    all_labels.add(r.target_from.upper())
 
-        out = []
-        for i in idxs:
-            r = records[i]
-            out.append(
-                {
-                    "target_tag": r.target_tag,
-                    "split": r.split,
-                    "image_id": r.image_id,
-                    "proposal_field": r.proposal_field,
-                    "proposal_type": r.proposal_type,
-                    "target_from": r.target_from,
-                    "target_to": r.target_to,
-                    "proposal_text": r.proposal_text,
-                }
-            )
-        return out
+            label_list = sorted(list(all_labels))
+            if len(label_list) < 3:
+                continue
 
-    # ---------- inferential ----------
-    def build_contingency_table(self, records: list[ProposalRecord], row_attr: str, col_attr: str):
-        row_vals = []
-        col_vals = []
+            clean_labels = [l.replace("_", " ").lower() for l in label_list]
+            embeddings = self.embed_model.encode(clean_labels)
+            embeddings_by_subject[subject] = embeddings
 
-        for r in records:
-            if row_attr == "target_tag":
-                rv = r.target_tag
-            elif row_attr == "split":
-                rv = r.split
-            elif row_attr == "proposal_field":
-                rv = r.proposal_field
-            else:
-                rv = r.proposal_type
+            best_k, max_s = 2, -1
+            k_range = range(2, min(max_k, len(label_list)))
+            for k in k_range:
+                km = KMeans(n_clusters=k, n_init="auto", random_state=self.config.seed).fit(embeddings)
+                s = silhouette_score(embeddings, km.labels_)
+                if s > max_s:
+                    max_s, best_k = s, k
 
-            if col_attr == "proposal_field":
-                cv = r.proposal_field
-            else:
-                cv = r.proposal_type
+            km = KMeans(n_clusters=best_k, n_init="auto", random_state=self.config.seed).fit(embeddings)
+            closest, _ = pairwise_distances_argmin_min(km.cluster_centers_, embeddings)
+            cluster_to_rep = {i: label_list[idx].upper() for i, idx in enumerate(closest)}
 
-            if rv and cv:
-                row_vals.append(rv)
-                col_vals.append(cv)
+            label_to_rep = {}
+            for idx, label in enumerate(label_list):
+                label_to_rep[label.upper()] = cluster_to_rep[km.labels_[idx]]
 
-        row_keys = sorted(set(row_vals))
-        col_keys = sorted(set(col_vals))
+            semantic_types = defaultdict(Counter)
+            for r in s_recs:
+                s_from = "EMPTY"
+                if r.target_from != "EMPTY":
+                    s_from = label_to_rep[r.target_from.upper()] if r.target_from.upper() in label_to_rep else r.target_from.upper()
 
-        row_index = {k: i for i, k in enumerate(row_keys)}
-        col_index = {k: j for j, k in enumerate(col_keys)}
+                s_to = label_to_rep[r.target_to.upper()] if r.target_to.upper() in label_to_rep else r.target_to.upper()
 
-        table = [[0 for _ in col_keys] for _ in row_keys]
-        for rv, cv in zip(row_vals, col_vals):
-            table[row_index[rv]][col_index[cv]] += 1
+                semantic_types[r.proposal_type][(s_from, s_to)] += 1
 
-        return row_keys, col_keys, table
+            type_analysis = {}
+            for p_type, counts in semantic_types.items():
+                type_analysis[p_type] = [
+                    {"from_merged": f, "to_merged": t, "count": c}
+                    for (f, t), c in counts.most_common(10)
+                ]
 
-    def cramers_v_from_table(self, table: list, chi2_stat: float):
-        n = 0
-        for row in table:
-            for v in row:
-                n += int(v)
+            analysis_by_subject[subject] = {
+                "optimal_k": best_k,
+                "silhouette_score": float(max_s),
+                "type_semantic_transitions": type_analysis,
+                "reps": cluster_to_rep,
+                "label_to_rep": label_to_rep,
+            }
 
-        if n == 0:
-            return 0.0
+        return analysis_by_subject, embeddings_by_subject
 
-        r = len(table)
-        c = len(table[0]) if r > 0 else 0
-        if r <= 1 or c <= 1:
-            return 0.0
 
-        denom = float(n) * float(min(r - 1, c - 1))
-        return sqrt(float(chi2_stat) / denom) if denom > 0.0 else 0.0
+    def perform_inferential_analysis(self, all_records: List[ProposalRecord]):
+        df = pd.DataFrame([asdict(r) for r in all_records])
 
-    def chisquare_test(self, table: list):
-        chi2_stat, p_value, dof, _expected = chi2_contingency(table)
-        return {"chi2": float(chi2_stat), "dof": int(dof), "p_value": float(p_value)}
+        inf = {}
+        groups = df.groupby(["kind", "subject"])
+        for (kind, subject), gdf in groups:
+            ct = pd.crosstab(gdf["split"], gdf["proposal_type"])
+            if ct.size <= 1:
+                continue
+            chi2, p, _, _ = chi2_contingency(ct)
+            key = f"{kind}__{subject}__split_vs_type"
+            inf[key] = {"chi2": float(chi2), "p_value": float(p), "distribution": ct.to_dict()}
 
-    def fisher_test_2x2(self, a: int, b: int, c: int, d: int):
-        odds_ratio, p_value = fisher_exact([[a, b], [c, d]])
-        return {"odds_ratio": float(odds_ratio), "p_value": float(p_value)}
+        return inf
 
-    def bh_fdr(self, p_values: list[float]):
-        indexed = list(enumerate(p_values))
-        indexed.sort(key=lambda x: x[1])
 
-        m = len(indexed)
-        q_values = [0.0 for _ in range(m)]
+    def visualize_descriptive(self, desc_results: dict, split: str):
+        label_desc = desc_results["label"]
+        self._visualize_desc_block(label_desc, split, prefix="label")
 
-        prev = 1.0
-        for rank in range(m, 0, -1):
-            idx, p = indexed[rank - 1]
-            q = float(p) * float(m) / float(rank)
-            if q > prev:
-                q = prev
-            prev = q
-            q_values[idx] = q
+        mapping_desc = desc_results["mapping"]
 
-        return q_values
+        we_to_hazard_desc = mapping_desc["we_to_hazard"]
+        self._visualize_desc_block(we_to_hazard_desc, split, prefix="mapping_we_to_hazard")
 
-    def analyze_inferential(self, records: list[ProposalRecord]):
-        results = {}
+        we_hazard_to_ppe_desc = mapping_desc["we_hazard_to_ppe"]
+        self._visualize_desc_block(we_hazard_to_ppe_desc, split, prefix="mapping_we_hazard_to_ppe")
 
-        row_keys, col_keys, table = self.build_contingency_table(records, "target_tag", "proposal_type")
-        chi = self.chisquare_test(table)
-        v = self.cramers_v_from_table(table, chi["chi2"])
-        results["chi_square_target_by_type"] = {
-            "rows": row_keys,
-            "cols": col_keys,
-            "table": table,
-            "chi2": chi["chi2"],
-            "dof": chi["dof"],
-            "p_value": chi["p_value"],
-            "cramers_v": v,
-            "scipy_available": SCIPY_AVAILABLE,
-        }
 
-        row_keys2, col_keys2, table2 = self.build_contingency_table(records, "split", "proposal_type")
-        chi2 = self.chisquare_test(table2)
-        v2 = self.cramers_v_from_table(table2, chi2["chi2"])
-        results["chi_square_split_by_type"] = {
-            "rows": row_keys2,
-            "cols": col_keys2,
-            "table": table2,
-            "chi2": chi2["chi2"],
-            "dof": chi2["dof"],
-            "p_value": chi2["p_value"],
-            "cramers_v": v2,
-            "scipy_available": SCIPY_AVAILABLE,
-        }
+    def _visualize_desc_block(self, block: dict, split: str, prefix: str):
+        for group_key, types in block.items():
+            for p_type, trans in types.items():
+                if not trans:
+                    continue
 
-        row_keys3, col_keys3, table3 = self.build_contingency_table(records, "proposal_field", "proposal_type")
-        chi3 = self.chisquare_test(table3)
-        v3 = self.cramers_v_from_table(table3, chi3["chi2"])
-        results["chi_square_field_by_type"] = {
-            "rows": row_keys3,
-            "cols": col_keys3,
-            "table": table3,
-            "chi2": chi3["chi2"],
-            "dof": chi3["dof"],
-            "p_value": chi3["p_value"],
-            "cramers_v": v3,
-            "scipy_available": SCIPY_AVAILABLE,
-        }
+                plt.figure(figsize=(10, 6))
+                labels = [f"{t['from'][:20]} -> {t['to'][:20]}" for t in trans]
+                counts = [t["count"] for t in trans]
 
-        per_target_counts = defaultdict(lambda: {"add": 0, "non_add": 0})
-        for r in records:
-            if r.proposal_type == "add":
-                per_target_counts[r.target_tag]["add"] += 1
-            else:
-                per_target_counts[r.target_tag]["non_add"] += 1
+                sns.barplot(x=counts, y=labels, palette="magma")
+                plt.title(f"[{split.upper()}] {prefix} | {group_key} | {p_type.upper()}")
+                plt.tight_layout()
+                safe_group = str(group_key).replace(" ", "_").replace("/", "_")
+                plt.savefig(self.save_dir / f"{split}_{prefix}_{safe_group}_{p_type}.png")
+                plt.close()
 
-        targets = sorted(per_target_counts.keys())
-        pairwise = []
-        pvals = []
 
-        for i in range(len(targets)):
-            for j in range(i + 1, len(targets)):
-                ti = targets[i]
-                tj = targets[j]
+    def visualize_semantic_all(self, sem_results: dict, sem_embeddings: dict, split: str):
+        for subject, data in sem_results.items():
+            if subject not in sem_embeddings:
+                continue
+            self.visualize_embedding_space(subject, data, sem_embeddings[subject], split)
 
-                a = per_target_counts[ti]["add"]
-                b = per_target_counts[ti]["non_add"]
-                c = per_target_counts[tj]["add"]
-                d = per_target_counts[tj]["non_add"]
 
-                ft = self.fisher_test_2x2(a, b, c, d)
-                p = ft["p_value"]
+    def visualize_embedding_space(self, field: str, data: dict, embeddings: np.ndarray, split: str):
+        n = embeddings.shape[0]
+        # label_to_rep의 순서대로 클러스터 ID 할당
+        labels_in_order = sorted(data["label_to_rep"].keys())
+        cluster_labels = []
+        for l in labels_in_order:
+            rep = data["label_to_rep"][l]
+            for idx, r_name in data["reps"].items():
+                if r_name == rep:
+                    cluster_labels.append(idx)
+                    break
 
-                pairwise.append(
-                    {
-                        "target_a": ti,
-                        "target_b": tj,
-                        "a_add": int(a),
-                        "a_non_add": int(b),
-                        "b_add": int(c),
-                        "b_non_add": int(d),
-                        "odds_ratio": ft["odds_ratio"],
-                        "p_value": ft["p_value"],
-                    }
-                )
-                pvals.append(float(p))
+        reducer = TSNE(n_components=2, perplexity=min(30, n-1), random_state=self.config.seed, init='pca', learning_rate='auto')
+        reduced = reducer.fit_transform(embeddings)
 
-        if len(pairwise) > 0:
-            qvals = self.bh_fdr(pvals)
-            for k in range(len(pairwise)):
-                pairwise[k]["q_value_fdr_bh"] = float(qvals[k])
+        plt.figure(figsize=(10, 8))
+        plt.scatter(reduced[:, 0], reduced[:, 1], c=cluster_labels, cmap='tab10', s=100)
+        for i, rep in data["reps"].items():
+            mask = np.array(cluster_labels) == i
+            if not mask.any(): continue
+            center = reduced[mask].mean(axis=0)
+            plt.annotate(rep, center, fontsize=8, fontweight='bold', bbox=dict(facecolor='white', alpha=0.6))
+        plt.title(f"[{split.upper()}] {field} Semantic Space")
+        plt.savefig(self.save_dir / f"{split}_embedding_{field}.png")
+        plt.close()
 
-        results["pairwise_fisher_add_share_by_target"] = {
-            "comparisons": pairwise,
-            "scipy_available": SCIPY_AVAILABLE,
-        }
-
-        return results
-
-    # ---------- bootstrap ----------
-    def group_records_by_sample(self, records: list[ProposalRecord]):
-        grouped = {}
-        for r in records:
-            key = (r.target_tag, r.split, r.image_id)
-            if key in grouped:
-                grouped[key].append(r)
-            else:
-                grouped[key] = [r]
-        return grouped
-
-    def compute_add_share_over_samples(self, sample_records_list: list):
-        total = 0
-        add_cnt = 0
-        for recs in sample_records_list:
-            for r in recs:
-                total += 1
-                if r.proposal_type == "add":
-                    add_cnt += 1
-        if total == 0:
-            return 0.0
-        return float(add_cnt) / float(total)
-
-    def compute_has_any_proposal_rate_over_samples(self, sample_records_list: list):
-        n = len(sample_records_list)
-        if n == 0:
-            return 0.0
-        has = 0
-        for recs in sample_records_list:
-            if len(recs) > 0:
-                has += 1
-        return float(has) / float(n)
-
-    def bootstrap_ci_for_share(self, samples: list, share_func_name: str, iters: int, seed: int):
-        rnd = random.Random(seed)
-        n = len(samples)
-        if n == 0:
-            return {"mean": None, "ci95_low": None, "ci95_high": None}
-
-        values = []
-        for _ in range(iters):
-            picked = [samples[rnd.randrange(n)] for _ in range(n)]
-            if share_func_name == "add_share":
-                share = self.compute_add_share_over_samples(picked)
-            else:
-                share = self.compute_has_any_proposal_rate_over_samples(picked)
-            values.append(float(share))
-
-        values.sort()
-        mean = sum(values) / float(len(values))
-        low_idx = int(0.025 * (len(values) - 1))
-        high_idx = int(0.975 * (len(values) - 1))
-
-        return {
-            "mean": float(mean),
-            "ci95_low": float(values[low_idx]),
-            "ci95_high": float(values[high_idx]),
-        }
+    def visualize_wordcloud(self, records: List[ProposalRecord], split: str):
+        text = " ".join([r.proposal_text for r in records if r.proposal_text])
+        if text.strip():
+            wc = WordCloud(width=800, height=400, background_color='white').generate(text)
+            plt.figure(figsize=(10, 5))
+            plt.imshow(wc)
+            plt.axis('off')
+            plt.title(f"[{split.upper()}] Proposal Reasons")
+            plt.savefig(self.save_dir / f"{split}_wordcloud.png")
+            plt.close()
