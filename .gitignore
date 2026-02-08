@@ -8,3 +8,5 @@ __pycache__
 
 runs/
 runs_eval/
+
+bench_vlm/outputs/
