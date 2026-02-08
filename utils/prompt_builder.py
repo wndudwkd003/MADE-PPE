@@ -122,6 +122,7 @@ class PromptBuilder:
             "\n"
             "Each item in proposals must match ProposalOut:\n"
             "- flag: must be true for every proposal item in the list\n"
+            "\n"
             "- kind: choose EXACTLY ONE of the following (string):\n"
             "  - label | mapping\n"
             "\n"
@@ -137,6 +138,11 @@ class PromptBuilder:
             "  - remove: target_from=\"EXISTING_KEY\" and target_to=\"\"\n"
             "  - modify: target_from=\"EXISTING_KEY\" and target_to=\"NEW_KEY\"\n"
             "\n"
+            "- What 'label' proposals mean (kind=label):\n"
+            "  - You are proposing to change the allowed label set itself.\n"
+            "  - This includes adding/removing/modifying PPEItem keys (i.e., entirely new PPE types are allowed here).\n"
+            "  - For kind=label, set scope.work_environment=\"\" and scope.hazard=\"\".\n"
+            "\n"
             "- scope rules (only for kind=mapping):\n"
             "  - subject=we_to_hazard:\n"
             "    - scope.work_environment must be set (WorkEnvironment key)\n"
@@ -148,15 +154,17 @@ class PromptBuilder:
             "    - scope.hazard must be set (HazardFactor key)\n"
             "    - PPE key is expressed by target_from/target_to\n"
             "\n"
-            "- scope rules (for kind=label):\n"
-            "  - scope.work_environment=\"\" and scope.hazard=\"\"\n"
-            "\n"
             "- proposal: short, evidence-based reason\n"
             "\n"
-            "- IMPORTANT:\n"
-            "  - If you propose adding a new label (kind=label, type=add), you should also include\n"
-            "    at least one mapping proposal (kind=mapping) that connects the new label so it is not isolated.\n"
+            "- IMPORTANT consistency rules:\n"
+            "  - If you propose adding a new label (kind=label, type=add), also add at least one mapping proposal\n"
+            "    (kind=mapping) that connects the new label so it is not isolated.\n"
+            "  - If your mapping proposal uses a hazard/ppe key that does not exist in the current label set,\n"
+            "    also include the corresponding kind=label add proposal for that hazard/ppe key.\n"
+            "  - If the hazard/ppe key already exists in the current label set, do NOT write a kind=label proposal for it;\n"
+            "    write only the required kind=mapping proposal(s).\n"
         )
+
 
 
     def hazard_to_ppe_map_for_work_env(self, we: WorkEnvironment):

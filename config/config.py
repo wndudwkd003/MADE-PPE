@@ -31,9 +31,9 @@ class Config:
     dataset: DatasetEnum = DatasetEnum.SH17
     model: ModelEnum = ModelEnum.GPT5_MINI
 
-    agent: AgentEnum = AgentEnum.MADE
+    agent: AgentEnum = AgentEnum.SINGLE_STEP
 
-    workers: int = 20
+    workers: int = 10
 
     runs: str = "runs"
     datasets_dir: str = "datasets"
@@ -41,9 +41,9 @@ class Config:
     seed: int = 42
 
     api_key: str = "config/api_keys.json"
-    max_todo: int = 50  # -1 for all
+    max_todo: int = 300  # -1 for all
 
-    explicit_target_tag: int = 3
+    explicit_target_tag: int = 1
 
     temperature: float = 0.7
     top_p: float = 0.9
