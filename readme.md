@@ -19,3 +19,18 @@ It uses a multi-agent pipeline (proposer–rebutter–judge) to produce structur
 
 ```bash
 python -m run
+```
+
+## Benchmark run
+
+```bash
+python -m build_train_jsonl
+```
+
+```bash
+python -m train_vlm
+```
+
+```bash
+python -m eval_vlm
+```
