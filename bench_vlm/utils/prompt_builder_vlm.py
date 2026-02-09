@@ -4,49 +4,46 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from params.params import TaskType
 
 
 class VlmPromptBuilder:
-    """
-    VLM 학습/평가용 단일 프롬프트.
-    - 입력: 이미지 1장
-    - 출력: labels/*.json 과 동일한 key를 갖는 JSON
-    """
-
-    def __init__(self, task_scope: str = "5stage"):
-        assert task_scope in ("3stage", "5stage")
-        self.task_scope = task_scope
+    def __init__(self, task_mode: TaskType = TaskType.ALL_5STAGE):
+        self.task_mode = task_mode
+        # Task별 전용 질문 정의
+        self.prompts = {
+            TaskType.SCENE: "Describe the specific industrial work environment in this image.",
+            TaskType.HAZARD: "Identify potential safety hazard factors in this work scene.",
+            TaskType.REQUIRED: "List the mandatory Personal Protective Equipment (PPE) required for this situation.",
+            TaskType.WEARING: "Analyze whether the workers are wearing the required PPE.",
+            TaskType.IMPROPER: "Detect any improperly worn PPE (e.g., chin strap unbuckled)."
+        }
 
     def build_prompt(self) -> str:
-        # 멀티 에이전트의 “proposer/rebutter/judge”를 VLM 학습에서는
-        # "internally think"로만 유지하고 결과 JSON만 출력하게 유도
-
-        keys_3 = ["work_environment", "hazards", "required_ppe"]
-        keys_5 = keys_3 + ["wearing", "improper_wearing"]
-
-        out_keys = keys_5 if self.task_scope == "5stage" else keys_3
-        out_schema = {k: "..." for k in out_keys}
-
+        if self.task_mode == TaskType.ALL_5STAGE:
+            return "You are an industrial safety assistant. Output a JSON with work_environment, hazards, required_ppe, wearing, and improper_wearing."
+        
+        # 개별 Task 프롬프트
+        instruction = self.prompts.get(self.task_mode, "Analyze this safety image.")
         return (
-            "You are an industrial safety labeling assistant.\n"
-            "Given ONE image, output a SINGLE JSON object that matches the required label keys.\n"
-            "Rules:\n"
-            "1) Output must be ONLY valid JSON. No extra text.\n"
-            "2) Keep label keys EXACTLY as specified.\n"
-            "3) hazards/required_ppe are list[str].\n"
-            "4) wearing/improper_wearing are list of {\"ppe\": str, \"worn\": bool}.\n"
-            "\n"
-            f"Required JSON keys: {out_keys}\n"
-            f"Example schema (structure only): {json.dumps(out_schema)}\n"
+            f"{instruction}\n"
+            "Output the result as a valid JSON object only."
         )
 
-    def build_target(self, label: dict[str, Any]) -> str:
-        base = {
-            "work_environment": label.get("work_environment"),
-            "hazards": label.get("hazards", []),
-            "required_ppe": label.get("required_ppe", []),
+    def build_target(self, label: dict) -> str:
+        # Task별로 필요한 key만 추출하여 Target 생성
+        mapping = {
+            TaskType.SCENE: ["work_environment"],
+            TaskType.HAZARD: ["hazards"],
+            TaskType.REQUIRED: ["required_ppe"],
+            TaskType.WEARING: ["wearing"],
+            TaskType.IMPROPER: ["improper_wearing"]
         }
-        if self.task_scope == "5stage":
-            base["wearing"] = label.get("wearing", [])
-            base["improper_wearing"] = label.get("improper_wearing", [])
-        return json.dumps(base, ensure_ascii=False)
+        
+        if self.task_mode == TaskType.ALL_5STAGE:
+            keys = ["work_environment", "hazards", "required_ppe", "wearing", "improper_wearing"]
+        else:
+            keys = mapping.get(self.task_mode, [])
+
+        target_obj = {k: label.get(k) for k in keys}
+        return json.dumps(target_obj, ensure_ascii=False)

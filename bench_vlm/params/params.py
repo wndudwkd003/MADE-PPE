@@ -4,13 +4,19 @@ from __future__ import annotations
 from enum import Enum
 
 
-class LabelSource(str, Enum):
-    MADE = "MADE"
-    SINGLE_STEP = "SINGLE_STEP"
-    SINGLE_ONESHOT = "SINGLE_ONESHOT"
-
-
-class ModelName(str, Enum):
-    QWEN2_VL = "qwen2_vl"
-    # LLAVA = "llava"
-    # BLIP2 = "blip2"
+class TaskType(str, Enum):
+    """
+    stage별 학습/평가 모드
+    - SCENE      : 1) work_environment
+    - HAZARD     : 1) + 2) hazards
+    - REQUIRED   : 1) + 2) + 3) required_ppe
+    - WEARING    : 1) + 2) + 3) + 4) wearing
+    - IMPROPER   : 1) + 2) + 3) + 4) + 5) improper_wearing
+    - ALL_5STAGE : 과거 one-shot 5단계 (= IMPROPER와 동일 키셋)
+    """
+    SCENE = "scene"
+    HAZARD = "hazard"
+    REQUIRED = "required"
+    WEARING = "wearing"
+    IMPROPER = "improper"
+    ALL_5STAGE = "5stage"
