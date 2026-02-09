@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from params.params import ModelName, LabelSource
+from params.params import TaskType
 
 def project_root() -> Path:
     return Path(__file__).resolve().parents[2]  # .../MADE-PPE
@@ -16,23 +16,14 @@ class BenchmarkConfig:
     ROOT: Path = project_root()
     RUNS_DIR: Path = project_root() / "runs"
     DATASETS_DIR: Path = project_root() / "datasets"
-
+    
     OUT_DIR: Path = project_root() / "bench_vlm" / "outputs"
-    JSONL_BASE_DIR: Path = project_root() / "bench_vlm" / "outputs" / "jsonl"
-    CKPT_DIR: Path = project_root() / "bench_vlm" / "outputs" / "checkpoints"
-    EVAL_DIR: Path = project_root() / "bench_vlm" / "outputs" / "eval"
 
     dataset_name: str = "SH17"
-    label_source: LabelSource = LabelSource.SINGLE_STEP
     label_run_tag: str = "SINGLE_STEP"
-
-    task_scope: str = "5stage"
-
-    model_name: ModelName = ModelName.QWEN2_VL
-    pretrained_id: str = "Qwen/Qwen2-VL-2B-Instruct"
-
-    max_train_samples: int | None = None
-    max_valid_samples: int | None = None
+    
+    pretrained_id: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    task_mode: TaskType = TaskType.ALL_5STAGE   # TaskType : SCENE, HAZARD, REQUIRED, WEARING, IMPROPER, ALL_5STAGE
 
     seed: int = 42
     num_train_epochs: int = 1
@@ -49,6 +40,8 @@ class BenchmarkConfig:
     max_prompt_tokens: int = 1024
     max_target_tokens: int = 256
     generation_max_new_tokens: int = 256
+    
+    image_size: int = 512
 
     use_lora: bool = True
     lora_r: int = 16
@@ -57,23 +50,34 @@ class BenchmarkConfig:
 
     bf16: bool = True
     fp16: bool = False
+    
+    max_train_samples: int | None = None
+    max_valid_samples: int | None = None
+    
 
-    def jsonl_run_dir(self) -> Path:
-        # outputs/jsonl/<label_run_tag>/
-        return self.JSONL_BASE_DIR / self.label_run_tag
+    @property
+    def JSONL_DIR(self) -> Path:
+        return self.OUT_DIR / "jsonl" / self.dataset_name / self.label_run_tag
+
+    @property
+    def CKPT_DIR(self) -> Path:
+        return self.OUT_DIR / "checkpoints" / self.dataset_name / self.label_run_tag
+
+    @property
+    def EVAL_DIR(self) -> Path:
+        return self.OUT_DIR / "eval" / self.dataset_name / self.label_run_tag
 
     @property
     def train_jsonl(self) -> Path:
-        return self.jsonl_run_dir() / "train.jsonl"
+        return self.JSONL_DIR / f"train_{self.task_mode.value}.jsonl"
 
     @property
     def valid_jsonl(self) -> Path:
-        return self.jsonl_run_dir() / "valid.jsonl"
+        return self.JSONL_DIR / f"valid_{self.task_mode.value}.jsonl"
 
     def ensure_dirs(self):
         self.OUT_DIR.mkdir(parents=True, exist_ok=True)
-        self.JSONL_BASE_DIR.mkdir(parents=True, exist_ok=True)
-        self.jsonl_run_dir().mkdir(parents=True, exist_ok=True)
+        self.JSONL_DIR.mkdir(parents=True, exist_ok=True)
         self.CKPT_DIR.mkdir(parents=True, exist_ok=True)
         self.EVAL_DIR.mkdir(parents=True, exist_ok=True)
 

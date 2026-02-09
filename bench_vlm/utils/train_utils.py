@@ -1,4 +1,4 @@
-# benchmark_vlm/utils/train_utils.py
+# bench_vlm/utils/train_utils.py
 
 from __future__ import annotations
 
@@ -39,14 +39,7 @@ def load_samples(jsonl_path: Path, max_samples: int | None = None) -> list[Sampl
     rows = read_jsonl(jsonl_path)
     if max_samples is not None:
         rows = rows[:max_samples]
-    out = []
-    for r in rows:
-        out.append(Sample(
-            image=r["image"],
-            prompt=r["prompt"],
-            target=r["target"],
-        ))
-    return out
+    return [Sample(image=r["image"], prompt=r["prompt"], target=r["target"]) for r in rows]
 
 
 class JsonlVlmDataset:
@@ -63,11 +56,12 @@ class JsonlVlmDataset:
 
 class VlmCollator:
     """
-    Qwen2-VL (causal) SFT collator:
-      - full_input = chat(user(image+prompt) + assistant(target))
-      - labels = full_input_ids with prompt part masked to -100
+    Qwen2.5-VL SFT collator:
+      user: [image] + prompt
+      assistant: target(JSON)
+    labels는 assistant 토큰만 학습하도록 prefix 부분 -100 처리
     """
-    def __init__(self, processor, max_prompt_tokens: int, max_target_tokens: int, max_image_size: int = 512):
+    def __init__(self, processor, max_prompt_tokens: int, max_target_tokens: int, max_image_size: int | None):
         self.processor = processor
         self.max_prompt_tokens = max_prompt_tokens
         self.max_target_tokens = max_target_tokens
@@ -79,83 +73,71 @@ class VlmCollator:
             return pp
         return (CFG.ROOT / pp).resolve()
 
-    def _load_image(self, p: str | Path) -> Image.Image:
+    def _load_image(self, p: str) -> Image.Image:
         img = Image.open(self._resolve_image_path(p)).convert("RGB")
-        img.thumbnail((self.max_image_size, self.max_image_size), Image.Resampling.BICUBIC)
+        if self.max_image_size is not None:
+            img.thumbnail((self.max_image_size, self.max_image_size), Image.Resampling.BICUBIC)
         return img
 
-    def _build_prompt_text(self, prompt: str) -> str:
-        msg = [
-            {
+    def __call__(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
+        import torch
+
+        images = [self._load_image(x["image"]) for x in batch]
+
+        full_texts = []
+        prefix_texts = []
+        for x in batch:
+            user_msg = {
                 "role": "user",
                 "content": [
                     {"type": "image"},
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": x["prompt"]},
                 ],
             }
-        ]
-        return self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
+            assistant_msg = {
+                "role": "assistant",
+                "content": [{"type": "text", "text": x["target"]}],
+            }
 
-    def _build_full_text(self, prompt: str, target: str) -> str:
-        msg = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": prompt},
-                ],
-            },
-            {"role": "assistant", "content": target},
-        ]
-        return self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False)
+            full_texts.append(
+                self.processor.apply_chat_template([user_msg, assistant_msg], tokenize=False, add_generation_prompt=False)
+            )
+            prefix_texts.append(
+                self.processor.apply_chat_template([user_msg], tokenize=False, add_generation_prompt=True)
+            )
 
-    def __call__(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
-        images = [self._load_image(x["image"]) for x in batch]
-        prompts = [x["prompt"] for x in batch]
-        targets = [x["target"] for x in batch]
-
-        prompt_texts = [self._build_prompt_text(p) for p in prompts]
-        full_texts = [self._build_full_text(p, t) for p, t in zip(prompts, targets)]
-
-        prompt_enc = self.processor(
+        prefix_inputs = self.processor(
             images=images,
-            text=prompt_texts,
+            text=prefix_texts,
             padding=True,
             truncation=True,
             max_length=self.max_prompt_tokens,
             return_tensors="pt",
         )
-        prompt_lens = (prompt_enc["attention_mask"].sum(dim=1)).tolist()
-
-        full_max_len = self.max_prompt_tokens + self.max_target_tokens
-        enc = self.processor(
+        full_inputs = self.processor(
             images=images,
             text=full_texts,
             padding=True,
             truncation=True,
-            max_length=full_max_len,
+            max_length=self.max_prompt_tokens + self.max_target_tokens,
             return_tensors="pt",
         )
 
-        input_ids = enc["input_ids"]
+        input_ids = full_inputs["input_ids"]
+        attention_mask = full_inputs.get("attention_mask", torch.ones_like(input_ids))
+
+        prefix_lens = prefix_inputs.get("attention_mask", torch.ones_like(prefix_inputs["input_ids"])).sum(dim=1)
+
         labels = input_ids.clone()
-
-        for i, plen in enumerate(prompt_lens):
+        for i, plen in enumerate(prefix_lens.tolist()):
             labels[i, :plen] = -100
+        labels[attention_mask == 0] = -100
 
-        pad_id = self.processor.tokenizer.pad_token_id
-        if pad_id is not None:
-            labels[labels == pad_id] = -100
-
-        enc["labels"] = labels
-        return enc
+        full_inputs["labels"] = labels
+        return full_inputs
 
 
 def build_model_and_processor(pretrained_id: str, bf16: bool = True, fp16: bool = False):
-    """
-    Load model + processor for VLM SFT.
-    Default: AutoModelForVision2Seq (works for Qwen2-VL).
-    """
     import torch
     from transformers import AutoProcessor, AutoModelForVision2Seq
 

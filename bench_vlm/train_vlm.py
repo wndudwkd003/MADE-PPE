@@ -31,12 +31,12 @@ def main():
         processor=processor,
         max_prompt_tokens=cfg.max_prompt_tokens,
         max_target_tokens=cfg.max_target_tokens,
-        max_image_size=512,
+        max_image_size=cfg.image_size,
     )
 
     from transformers import TrainingArguments, Trainer
 
-    out_dir = cfg.CKPT_DIR / f"{cfg.model_name.value}_{cfg.dataset_name}_{cfg.label_run_tag}"
+    out_dir = cfg.CKPT_DIR / cfg.task_mode.value
     out_dir.mkdir(parents=True, exist_ok=True)
 
     args = TrainingArguments(
@@ -56,7 +56,6 @@ def main():
         bf16=cfg.bf16,
         fp16=cfg.fp16,
         report_to=[],
-        label_names=["labels"],
         remove_unused_columns=False,
     )
 
@@ -69,8 +68,11 @@ def main():
     )
 
     trainer.train()
-    trainer.save_model(str(out_dir / "final"))
-    print(f"[ok] saved model: {out_dir / 'final'}")
+
+    final_dir = out_dir / "final"
+    trainer.save_model(str(final_dir))
+    processor.save_pretrained(str(final_dir))
+    print(f"[ok] saved model: {final_dir}")
 
 
 if __name__ == "__main__":

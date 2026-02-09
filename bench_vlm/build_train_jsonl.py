@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from config.config import CFG
 from utils.io_utils import write_jsonl
-from utils.data_builder import resolve_image_path, resolve_label_dirs, iter_label_files, load_label
+from utils.data_builder import (
+    resolve_label_dirs,
+    iter_label_files,
+    load_and_validate_label,
+    resolve_image_path,
+)
 from utils.prompt_builder_vlm import VlmPromptBuilder
 
 
@@ -12,7 +17,7 @@ def main():
     cfg = CFG
     cfg.ensure_dirs()
 
-    pb = VlmPromptBuilder(task_scope=cfg.task_scope)
+    pb = VlmPromptBuilder(task_mode=cfg.task_mode)
     prompt = pb.build_prompt()
 
     label_dirs = resolve_label_dirs(cfg.RUNS_DIR, cfg.dataset_name, cfg.label_run_tag)
@@ -25,11 +30,15 @@ def main():
     valid_rows = []
 
     for info in label_dirs:
-        files = iter_label_files(info.labels_dir)
-        for fp in files:
-            label = load_label(fp)
+        for fp in iter_label_files(info.labels_dir):
+            label = load_and_validate_label(fp, cfg.task_mode.value)
+            if label is None:
+                continue
+
+            label["image"] = resolve_image_path(label["image"], cfg.ROOT)
+
             row = {
-                "image": resolve_image_path(cfg.ROOT, label["image"]),     # absolute or relative path 그대로
+                "image": label["image"],
                 "prompt": prompt,
                 "target": pb.build_target(label),
             }
