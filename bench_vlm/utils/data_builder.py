@@ -61,6 +61,39 @@ def load_and_validate_label(label_path: Path, task_mode: str) -> dict[str, Any] 
 
     trimmed = {k: label[k] for k in keep_keys}
 
+    if "wearing" in trimmed:
+        w = trimmed.get("wearing")
+        if isinstance(w, list):
+            w2 = {}
+            ok = True
+            for item in w:
+                if not isinstance(item, dict) or "ppe" not in item:
+                    ok = False
+                    break
+                w2[item["ppe"]] = item.get("worn")
+            if not ok:
+                print(f"[skip] wearing list has invalid items: {label_path.name}")
+                return None
+            trimmed["wearing"] = w2
+
+    if "improper_wearing" in trimmed:
+        iw = trimmed.get("improper_wearing")
+        if isinstance(iw, list):
+            if len(iw) == 0:
+                trimmed["improper_wearing"] = {}
+            else:
+                iw2 = {}
+                ok = True
+                for item in iw:
+                    if not isinstance(item, dict) or "ppe" not in item:
+                        ok = False
+                        break
+                    iw2[item["ppe"]] = {k: v for k, v in item.items() if k != "ppe"}
+                if not ok:
+                    print(f"[skip] improper_wearing list has invalid items: {label_path.name}")
+                    return None
+                trimmed["improper_wearing"] = iw2
+
     if task_mode in ("hazard", "required", "wearing", "improper", "5stage") and not isinstance(trimmed.get("hazards"), list):
         print(f"[skip] hazards is not list: {label_path.name}")
         return None
