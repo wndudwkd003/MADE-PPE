@@ -2,9 +2,8 @@
 
 from enum import Enum
 
-
 class WorkEnvironment(Enum):
-    # --- 기존 작업환경 ---
+    # --- [Existing] 기존 작업환경 ---
     CUTTING_GRINDING_MACHINING_POLISHING = "Cutting, grinding, machining, polishing"
     DRILLING_CRUSHING_DEMOLITION_DISMANTLING = "Drilling, crushing, demolition, dismantling"
     WELDING_CUTTING_HOT_WORK = "Welding, cutting, hot work"
@@ -18,14 +17,19 @@ class WorkEnvironment(Enum):
     CONFINED_SPACE_WORK = "Confined space work"
     LOW_TEMPERATURE_COLD_WORK = "Low-temperature, cold work"
 
-    # --- [New] 제안된 작업환경 추가 ---
-    HEALTHCARE_PATIENT_CARE = "Healthcare, patient care, infectious disease handling"
+    # --- [New] 분석 결과 기반 추가 (빈도수 높은 항목 반영) ---
+    # 의료/바이오 관련 (통합)
+    HEALTHCARE_PATIENT_CARE_INFECTIOUS = "Healthcare, patient care, infectious disease, lab"
+    # 터널/지하 작업
     TUNNEL_UNDERGROUND_WORK = "Tunnel, underground excavation work"
-    ROOFTOP_SOLAR_INSTALLATION = "Rooftop solar panel installation"  # 고소작업+전기의 복합 성격
+    # 목공 (기존 W05와 분리되어 식별됨)
+    WOODWORKING_SPECIFIC = "Woodworking, timber processing"
+    # 태양광/지붕 작업
+    ROOFTOP_SOLAR_INSTALLATION = "Rooftop solar panel installation"
 
 
 class HazardFactor(Enum):
-    # --- 기존 위험요소 ---
+    # --- [Existing] 기존 위험요소 ---
     CUTTING = "Cutting"
     TOXIC_SUBSTANCE = "Toxic substances"
     HIGH_TEMPERATURE = "High temperature"
@@ -42,17 +46,17 @@ class HazardFactor(Enum):
     LIGHTING = "Lighting"
     BIOLOGICAL_INFECTIOUS = "Biological/infectious"
 
-    # --- [New] 제안된 위험요소 추가 (구체화된 항목들) ---
-    CHEMICAL_EXPOSURE_HAZARD = "Chemical exposure hazard" # TOXIC_SUBSTANCE와 유사하나 제안된 용어 반영
-    CHEMICAL_AEROSOL = "Chemical aerosol"
-    FALLING_OBJECTS = "Falling objects"  # FALL(사람의 추락)과 구분되는 낙하물
-    ICE_CONDITIONS = "Ice conditions"    # SLIP의 구체적 원인
-    HOT_SPARKS = "Hot sparks"            # 용접 시 구체적 위험
-    ENTANGLEMENT_CRUSHING_FROM_ROTATING_MACHINERY = "Entanglement/crushing from rotating machinery" # CAUGHT_IN의 구체화
+    # --- [New] 분석 결과 기반 추가 (구체화된 위험) ---
+    CHEMICAL_EXPOSURE_HAZARD = "Chemical exposure hazard" # 피부 접촉 등 구체적 위험
+    CHEMICAL_AEROSOL = "Chemical aerosol"                 # 흡입 위험
+    FALLING_OBJECTS = "Falling objects"                   # 낙하물 (Fall은 사람 추락, 이건 물체 낙하)
+    ICE_CONDITIONS = "Ice conditions"                     # 결빙으로 인한 미끄러짐
+    HOT_SPARKS = "Hot sparks"                             # 용접 스파크
+    ENTANGLEMENT_CRUSHING_FROM_ROTATING_MACHINERY = "Entanglement/crushing from rotating machinery" # 끼임의 구체화
 
 
 class PPEItem(Enum):
-    # --- 기존 PPE ---
+    # --- [Existing] 기존 PPE ---
     SAFETY_GOGGLES = "Safety goggles"
     SAFETY_SHOES = "Safety shoes"
     CUT_RESISTANT_GLOVES = "Cut-resistant gloves"
@@ -87,12 +91,15 @@ class PPEItem(Enum):
     ANTI_PINCH_GLOVES = "Anti-pinch gloves"
     WELDING_MASK = "Welding mask"
 
-    # --- [New] 제안된 PPE 추가 ---
-    # 제안된 일반화된 용어 및 신규 아이템
-    SAFETY_HELMET = "Safety helmet"  # A/AB/ABE 타입을 포괄하는 일반 용어
+    # --- [New] 분석 결과 기반 추가 ---
+    SAFETY_HELMET = "Safety helmet"  # 일반형 헬멧 (분석에서 빈출)
     FACE_SHIELD_OR_WELDING_GOGGLES = "Face shield or welding goggles"
     MEDICAL_GLOVES = "Medical gloves"
     PROTECTIVE_CLOTHING = "Protective clothing" # 일반 작업복/보호복
-    SAFETY_FOOTWEAR = "Safety footwear"         # 안전화 포괄 용어
+    SAFETY_FOOTWEAR = "Safety footwear"         # 안전화 통칭
     INSULATING_COLD_BOOTS = "Insulating cold boots"
-    DIELECTRIC_TOOLS = "Dielectric tools"       # 절연 공구
+    DIELECTRIC_TOOLS = "Dielectric tools"       # 절연 공구 (안전장비의 일종으로 분류)
+    HIGH_VISIBILITY_VEST = "High visibility vest" # 터널/건설 현장 필수
+    EYE_PROTECTION = "Eye protection"           # 보안경 통칭
+    HARD_HAT = "Hard hat"                       # Safety Helmet의 이명
+    CUT_AND_ANTI_PINCH_GLOVES = "Cut and anti-pinch gloves" # 복합 기능 장갑
