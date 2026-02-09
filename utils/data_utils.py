@@ -30,6 +30,31 @@ def sh17_process(dataset_dir: Path) -> dict:
     return {"train": train_paths, "valid": valid_paths, "test": []}
 
 
+def scp300_process(dataset_dir: Path) -> dict:
+
+    train = "train"
+    valid = "valid"
+
+    able_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}
+
+    def read_images(split_dir: Path):
+        image_paths = []
+
+        for ext in able_exts:
+            image_paths.extend(split_dir.glob(f"*{ext}"))
+
+        return image_paths
+
+    train_paths = read_images(dataset_dir / train)
+    valid_paths = read_images(dataset_dir / valid)
+
+    return {"train": train_paths, "valid": valid_paths, "test": []}
+
+
+
+
+
+
 def get_data(datasets_dir: str, dataset: DatasetEnum) -> dict:
 
     datasets_dir = Path(datasets_dir)
@@ -37,5 +62,8 @@ def get_data(datasets_dir: str, dataset: DatasetEnum) -> dict:
 
     if dataset == DatasetEnum.SH17:
         return sh17_process(dataset_dir)
+
+    if dataset == DatasetEnum.SCP300:
+        return scp300_process(dataset_dir)
 
     raise NotImplementedError(f"get_data is not implemented for dataset={dataset}")

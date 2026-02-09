@@ -1,5 +1,3 @@
-# core/single_oneshot.py
-
 from __future__ import annotations
 
 import time
@@ -9,6 +7,7 @@ from tqdm.auto import tqdm
 from core.agent import Agent
 from params.output_schema import OneShotOut
 
+from utils.prompt_builder_single_oneshot import SingleOneShotPromptBuilder
 
 class SingleOneShot(Agent):
     """
@@ -20,7 +19,6 @@ class SingleOneShot(Agent):
 
     def __init__(self, config):
         super().__init__(config)
-        from utils.prompt_builder_single_oneshot import SingleOneShotPromptBuilder
         self.prompt_builder = SingleOneShotPromptBuilder()
 
     def run_one_image(self, image_file_id, image_path, split, all_dir, labels_dir, errors_jsonl):
@@ -33,8 +31,9 @@ class SingleOneShot(Agent):
         all_final_path = Path(all_dir) / f"{stem}.json"
         labels_path = Path(labels_dir) / f"{stem}.json"
 
-        # ---- single prompt ----
-        pack = self.prompt_builder.build(state=state)
+        # ---- single prompt (Updated: text_format 인자 전달) ----
+        # OneShotOut 스키마를 프롬프트 빌더에게 넘겨주어야 합니다.
+        pack = self.prompt_builder.build(state=state, text_format=OneShotOut)
 
         tqdm.write("=" * 50)
         tqdm.write(f"[{stem}] SINGLE_ONESHOT START")
@@ -127,9 +126,13 @@ class SingleOneShot(Agent):
         return v.name if hasattr(v, "name") else v
 
     def _list_enum_to_names(self, xs):
+        if xs is None:
+            return []
         return [self._enum_to_name(x) for x in xs]
 
     def _normalize_wearing_list(self, items):
+        if not items:
+            return []
         out = []
         for it in items:
             out.append({
@@ -155,6 +158,8 @@ class SingleOneShot(Agent):
         return out
 
     def _dump_proposals(self, proposals):
+        if not proposals:
+            return []
         out = []
         for p in proposals:
             out.append(p.model_dump())
@@ -164,6 +169,8 @@ class SingleOneShot(Agent):
     # state update
     # -----------------
     def update_state_from_oneshot(self, parsed: OneShotOut, state: dict):
+        if "stage_outputs" not in state:
+            state["stage_outputs"] = {}
         stage_outputs = state["stage_outputs"]
 
         # 1) WORK_ENVIRONMENT (WorkEnvironmentOut)
