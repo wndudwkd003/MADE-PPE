@@ -46,7 +46,7 @@ class Config:
     api_key: str = "config/api_keys.json"
     max_todo: int = 300  # -1 for all
 
-    explicit_target_tag: int = 1
+    explicit_target_tag: int = 3
 
     temperature: float = 0.7
     top_p: float = 0.9
