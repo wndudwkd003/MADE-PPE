@@ -25,15 +25,18 @@ ROLE_SEQUENCE = [
 
 @dataclass
 class Config:
+    clustering_mode: str = "manual"
+    clustering_k: int = 8          # manual 모드일 때 사용할 클러스터 개수
+
     # LABELING or EVALUATION or ANALYSIS
-    do_mode: DoModeEnum = DoModeEnum.EVALUATION
+    do_mode: DoModeEnum = DoModeEnum.LABELING
 
     dataset: DatasetEnum = DatasetEnum.SCP300
     model: ModelEnum = ModelEnum.GPT5_MINI
 
-    agent: AgentEnum = AgentEnum.SINGLE_STEP
+    agent: AgentEnum = AgentEnum.MADE
 
-    workers: int = 20
+    workers: int = 30
 
     runs: str = "runs"
     datasets_dir: str = "datasets"
@@ -43,7 +46,7 @@ class Config:
     api_key: str = "config/api_keys.json"
     max_todo: int = 300  # -1 for all
 
-    explicit_target_tag: int = 3
+    explicit_target_tag: int = 1
 
     temperature: float = 0.7
     top_p: float = 0.9

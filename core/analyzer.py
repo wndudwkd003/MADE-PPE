@@ -337,34 +337,146 @@ class Analyzer:
         return records
 
     def perform_semantic_analysis(self, records: List[ProposalRecord], max_k: int = 10) -> Tuple[Dict, Dict]:
-        subject_groups = defaultdict(list)
+        # 1. 데이터를 Kind별로 분리
+        label_groups = defaultdict(list)
+        mapping_groups = defaultdict(list)
+
         for r in records:
-            if r.kind == "label": subject_groups[r.subject].append(r)
-        analysis_by_subject = {}
+            if r.kind == "label":
+                label_groups[r.subject].append(r)
+            elif r.kind == "mapping":
+                mapping_groups[r.subject].append(r)
+
+        analysis_results = {}
         embeddings_by_subject = {}
-        for subject, s_recs in subject_groups.items():
-            all_labels = {r.target_to.upper() for r in s_recs if r.target_to} | {r.target_from.upper() for r in s_recs if r.target_from != "EMPTY"}
+
+        # 클러스터링 모드 설정
+        mode = getattr(self.config, "clustering_mode", "auto").lower()
+        manual_k = getattr(self.config, "clustering_k", 5)
+
+        # -------------------------------------------------------
+        # Phase 1: Label Clustering (엔티티별 대표 용어 사전 생성)
+        # -------------------------------------------------------
+        # 각 subject(예: work_environment, hazard)별로 label_to_rep(매핑 테이블)을 생성합니다.
+
+        for subject, s_recs in label_groups.items():
+            all_labels = {r.target_to.upper() for r in s_recs if r.target_to} | \
+                         {r.target_from.upper() for r in s_recs if r.target_from != "EMPTY"}
             label_list = sorted(list(all_labels))
-            if len(label_list) < 3: continue
+            n_samples = len(label_list)
+
+            if n_samples < 3:
+                continue
+
+            # 임베딩 생성
             embeddings = self.embed_model.encode([l.replace("_", " ").lower() for l in label_list])
             embeddings_by_subject[subject] = embeddings
-            best_k, max_s = 2, -1
-            k_range = range(2, min(max_k, len(label_list)))
-            for k in k_range:
-                km = KMeans(n_clusters=k, n_init="auto", random_state=self.config.seed).fit(embeddings)
-                s = silhouette_score(embeddings, km.labels_)
-                if s > max_s: max_s, best_k = s, k
+
+            best_k = 2
+            max_s = -1.0
+
+            # K 결정 로직 (Auto vs Manual)
+            if mode == "manual":
+                target_k = min(manual_k, n_samples - 1)
+                best_k = max(2, target_k)
+            else:
+                k_range = range(2, min(max_k, n_samples))
+                for k in k_range:
+                    km = KMeans(n_clusters=k, n_init="auto", random_state=self.config.seed).fit(embeddings)
+                    s = silhouette_score(embeddings, km.labels_)
+                    if s > max_s:
+                        max_s, best_k = s, k
+
+            # 최종 클러스터링 수행
             km = KMeans(n_clusters=best_k, n_init="auto", random_state=self.config.seed).fit(embeddings)
-            cluster_to_rep = {i: label_list[idx].upper() for i, idx in enumerate(pairwise_distances_argmin_min(km.cluster_centers_, embeddings)[0])}
+
+            # 대표 라벨 선정
+            closest, _ = pairwise_distances_argmin_min(km.cluster_centers_, embeddings)
+            cluster_to_rep = {i: label_list[idx].upper() for i, idx in enumerate(closest)}
+
+            # [핵심] 원본 라벨 -> 대표 라벨 변환 딕셔너리
             label_to_rep = {l.upper(): cluster_to_rep[km.labels_[idx]] for idx, l in enumerate(label_list)}
+
+            # Label 통계 집계 (기존 로직)
             semantic_types = defaultdict(Counter)
             for r in s_recs:
                 s_from = label_to_rep.get(r.target_from.upper(), "EMPTY") if r.target_from != "EMPTY" else "EMPTY"
                 s_to = label_to_rep.get(r.target_to.upper(), r.target_to.upper())
                 semantic_types[r.proposal_type][(s_from, s_to)] += 1
-            type_analysis = {pt: [{"from_merged": f, "to_merged": t, "count": c, "pct_within_type": round((c/sum(counts.values()))*100, 2)} for (f, t), c in counts.most_common(10)] for pt, counts in semantic_types.items()}
-            analysis_by_subject[subject] = {"optimal_k": best_k, "silhouette_score": float(max_s), "type_semantic_transitions": type_analysis, "label_to_rep": label_to_rep, "reps": cluster_to_rep}
-        return analysis_by_subject, embeddings_by_subject
+
+            type_analysis = {
+                pt: [{"from_merged": f, "to_merged": t, "count": c, "pct_within_type": round((c/sum(counts.values()))*100, 2)}
+                     for (f, t), c in counts.most_common(10)]
+                for pt, counts in semantic_types.items()
+            }
+
+            analysis_results[subject] = {
+                "kind": "label",
+                "clustering_mode": mode,
+                "optimal_k": best_k,
+                "silhouette_score": float(max_s) if mode == "auto" else None,
+                "type_semantic_transitions": type_analysis,
+                "label_to_rep": label_to_rep,
+                "reps": cluster_to_rep
+            }
+
+        # -------------------------------------------------------
+        # Phase 2: Mapping Aggregation (병합 기준 적용하여 매핑 분석)
+        # -------------------------------------------------------
+        # Label 분석에서 생성된 label_to_rep 맵을 사용하여 Mapping 데이터를 변환/집계합니다.
+
+        # 매핑 관계 정의: Mapping Subject -> (Source Subject, Target Subject)
+        # 예: we_to_hazard는 work_environment에서 hazard로 가는 매핑임
+        mapping_relations = {
+            "we_to_hazard": ("work_environment", "hazard"),
+            "we_hazard_to_ppe": ("hazard", "compliance"), # 데이터셋에 따라 'compliance' 혹은 'ppe' 확인 필요
+            # 필요에 따라 추가
+        }
+
+        for map_subject, m_recs in mapping_groups.items():
+            # 정의된 관계가 없으면 스킵 (혹은 기본 처리)
+            if map_subject not in mapping_relations:
+                continue
+
+            src_entity, tgt_entity = mapping_relations[map_subject]
+
+            # Phase 1에서 생성된 맵 가져오기 (없으면 빈 딕셔너리 -> 변환 없이 원본 사용됨)
+            src_map = analysis_results.get(src_entity, {}).get("label_to_rep", {})
+            tgt_map = analysis_results.get(tgt_entity, {}).get("label_to_rep", {})
+
+            # 매핑 데이터 변환 및 카운팅
+            merged_counts = defaultdict(Counter) # type -> (from, to) -> count
+
+            for r in m_recs:
+                # 1. Source 변환
+                raw_from = r.target_from.upper()
+                # 매핑 테이블에 있으면 변환, 없으면 원본 유지 (EMPTY 처리 포함)
+                merged_from = src_map.get(raw_from, raw_from) if raw_from != "EMPTY" else "EMPTY"
+
+                # 2. Target 변환
+                raw_to = r.target_to.upper()
+                merged_to = tgt_map.get(raw_to, raw_to)
+
+                merged_counts[r.proposal_type][(merged_from, merged_to)] += 1
+
+            # 통계 포맷팅
+            mapping_analysis = {
+                pt: [{"from_merged": f, "to_merged": t, "count": c,
+                      "pct_within_type": round((c/sum(counts.values()))*100, 2)}
+                     for (f, t), c in counts.most_common(15)] # Mapping은 조합이 많으므로 Top 15
+                for pt, counts in merged_counts.items()
+            }
+
+            # 결과 저장 (mapping은 클러스터링 정보 없이 통계만 저장)
+            analysis_results[map_subject] = {
+                "kind": "mapping",
+                "source_entity": src_entity,
+                "target_entity": tgt_entity,
+                "type_semantic_transitions": mapping_analysis
+            }
+
+        return analysis_results, embeddings_by_subject
+
 
     def perform_inferential_analysis(self, all_records: List[ProposalRecord]):
         df = pd.DataFrame([asdict(r) for r in all_records])
