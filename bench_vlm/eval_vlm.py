@@ -28,6 +28,25 @@ def _load_image(p: str, max_size: int | None) -> Image.Image:
     return img
 
 
+def _extract_json_text(s: str) -> str:
+    s = (s or "").strip()
+
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+
+    l = s.find("{")
+    r = s.rfind("}")
+    if l != -1 and r != -1 and r > l:
+        s = s[l:r+1].strip()
+
+    return s
+
+
 def main():
     cfg = CFG
     cfg.ensure_dirs()
@@ -75,8 +94,8 @@ def main():
             new_tokens = gen_ids[0, inputs["input_ids"].shape[1]:]
             text = processor.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
-            pred_obj, err = safe_json_loads(text)
-            gold_obj, _ = safe_json_loads(r["target"])
+            pred_obj, err = safe_json_loads(_extract_json_text(text))
+            gold_obj, _ = safe_json_loads(_extract_json_text(r["target"]))
 
             preds_out.append({
                 "image": r["image"],
