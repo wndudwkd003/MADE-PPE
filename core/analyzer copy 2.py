@@ -288,52 +288,24 @@ class Analyzer:
 
     def extract_records(self, sample: dict, target_tag: str, split: str) -> List[ProposalRecord]:
         final_state = sample.get("final_state", {})
-        # 이미지 ID 추출 (에러 방지를 위해 방어적 코드 추가)
-        image_path = sample.get("image", "")
-        image_id = get_image_id(image_path) if image_path else "unknown"
-
+        image_id = get_image_id(sample["image"])
         stage_keys = ["work_environment", "hazard", "compliance"]
         records = []
-
         for stage in stage_keys:
-            # 1. [구버전 호환] stage_outputs 내부에 있는 경우
-            # 예: final_state["stage_outputs"]["work_environment"]["proposals"]
-            stage_out_nested = final_state.get("stage_outputs", {}).get(stage)
-            proposals_nested = stage_out_nested.get("proposals", []) if stage_out_nested else []
-
-            # 2. [신버전] final_state 바로 아래에 있는 경우 (현재 데이터)
-            # 예: final_state["proposals_work_environment"]
-            proposals_flat = final_state.get(f"proposals_{stage}", [])
-
-            # 두 리스트를 합침 (둘 중 하나만 있어도 동작, 둘 다 있어도 누락 없음)
-            combined_proposals = list(proposals_nested) + list(proposals_flat)
-
-            if not combined_proposals:
-                continue
-
-            for p in combined_proposals:
-                # flag가 true인 것만 처리
-                if p.get("flag") is not True:
-                    continue
-
+            stage_out = final_state.get("stage_outputs", {}).get(stage)
+            if not stage_out: continue
+            for p in stage_out.get("proposals", []):
+                if p.get("flag") is not True: continue
                 scope = p.get("scope", {})
-
-                # 데이터 추가
                 records.append(ProposalRecord(
-                    target_tag=target_tag,
-                    split=split,
-                    image_id=image_id,
-                    stage=stage,
-                    kind=p.get("kind", ""),
-                    subject=p.get("subject", ""),
-                    proposal_type=p.get("type", ""),
+                    target_tag=target_tag, split=split, image_id=image_id,
+                    stage=stage, kind=p["kind"], subject=p["subject"], proposal_type=p["type"],
                     target_from=str(p.get("target_from", "")).strip() or "EMPTY",
                     target_to=str(p.get("target_to", "")).strip(),
                     proposal_text=p.get("proposal", ""),
                     scope_work_environment=str(scope.get("work_environment", "")).strip(),
                     scope_hazard=str(scope.get("hazard", "")).strip()
                 ))
-
         return records
 
     def perform_semantic_analysis(self, records: List[ProposalRecord], max_k: int = 10) -> Tuple[Dict, Dict]:
