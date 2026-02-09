@@ -49,6 +49,48 @@ def _select_keys_for_mode(mode: str) -> list[str]:
         return ["image", "work_environment", "hazards", "required_ppe", "wearing", "improper_wearing"]
     raise ValueError(f"Unknown task_mode: {mode}")
 
+def _normalize_wearing(wearing: Any) -> list[dict[str, Any]] | None:
+    if isinstance(wearing, list):
+        ok = all(isinstance(x, dict) and "ppe" in x and "worn" in x for x in wearing)
+        return wearing if ok else None
+    if isinstance(wearing, dict):
+        return [{"ppe": k, "worn": bool(v)} for k, v in wearing.items()]
+    return None
+
+
+def _normalize_improper(improper: Any) -> list[Any] | None:
+    if improper is None:
+        return []
+
+    if isinstance(improper, list):
+        if len(improper) == 0:
+            return []
+        if all(isinstance(x, dict) and "ppe" in x for x in improper):
+            out = []
+            for x in improper:
+                y = dict(x)
+                if "worn" not in y:
+                    y["worn"] = True
+                out.append(y)
+            return out
+
+        if all(isinstance(x, str) for x in improper):
+            return [{"ppe": x, "worn": True} for x in improper]
+
+        return None
+
+    if isinstance(improper, dict):
+        out = []
+        for k, v in improper.items():
+            item = {"ppe": str(k)}
+            if isinstance(v, dict):
+                item.update(v)
+            if "worn" not in item:
+                item["worn"] = True
+            out.append(item)
+        return out
+
+    return None
 
 def load_and_validate_label(label_path: Path, task_mode: str) -> dict[str, Any] | None:
     label = read_json(label_path)
@@ -76,35 +118,23 @@ def load_and_validate_label(label_path: Path, task_mode: str) -> dict[str, Any] 
                 return None
             trimmed["wearing"] = w2
 
-    if "improper_wearing" in trimmed:
-        iw = trimmed.get("improper_wearing")
-        if isinstance(iw, list):
-            if len(iw) == 0:
-                trimmed["improper_wearing"] = {}
-            else:
-                iw2 = {}
-                ok = True
-                for item in iw:
-                    if not isinstance(item, dict) or "ppe" not in item:
-                        ok = False
-                        break
-                    iw2[item["ppe"]] = {k: v for k, v in item.items() if k != "ppe"}
-                if not ok:
-                    print(f"[skip] improper_wearing list has invalid items: {label_path.name}")
-                    return None
-                trimmed["improper_wearing"] = iw2
-
     if task_mode in ("hazard", "required", "wearing", "improper", "5stage") and not isinstance(trimmed.get("hazards"), list):
         print(f"[skip] hazards is not list: {label_path.name}")
         return None
     if task_mode in ("required", "wearing", "improper", "5stage") and not isinstance(trimmed.get("required_ppe"), list):
         print(f"[skip] required_ppe is not list: {label_path.name}")
         return None
-    if task_mode in ("wearing", "improper", "5stage") and not isinstance(trimmed.get("wearing"), dict):
-        print(f"[skip] wearing is not dict: {label_path.name}")
-        return None
-    if task_mode in ("improper", "5stage") and not isinstance(trimmed.get("improper_wearing"), dict):
-        print(f"[skip] improper_wearing is not dict: {label_path.name}")
-        return None
+    if task_mode in ("wearing", "improper", "5stage"):
+        nw = _normalize_wearing(trimmed.get("wearing"))
+        if nw is None:
+            print(f"[skip] wearing invalid: {label_path.name}")
+            return None
+        trimmed["wearing"] = nw
+    if task_mode in ("improper", "5stage"):
+        ni = _normalize_improper(trimmed.get("improper_wearing"))
+        if ni is None:
+            print(f"[skip] improper_wearing invalid: {label_path.name}")
+            return None
+        trimmed["improper_wearing"] = ni
 
     return trimmed
