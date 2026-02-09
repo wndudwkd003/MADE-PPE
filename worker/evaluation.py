@@ -83,34 +83,39 @@ def test_made_ppe(config: Config, target_paths: list[Path], test_dir: Path):
             counts[split]["num_compared"] += 1
 
             for test_key in config.test_keys:
+                # [수정 1] 반환값에 weight 추가 (4개 변수로 언패킹)
                 if test_key == StageEnum.WORK_ENVIRONMENT.value:
-                    sample_score, per_target, used_targets = score_work_environment(samples_by_target, test_key)
+                    sample_score, per_target, used_targets, weight = score_work_environment(samples_by_target, test_key)
 
                 elif test_key == StageEnum.HAZARD.value:
-                    sample_score, per_target, used_targets = score_set_list(samples_by_target, test_key)
+                    sample_score, per_target, used_targets, weight = score_set_list(samples_by_target, test_key)
 
                 elif test_key == StageEnum.COMPLIANCE.value:
-                    sample_score, per_target, used_targets = score_set_list(samples_by_target, test_key)
+                    sample_score, per_target, used_targets, weight = score_set_list(samples_by_target, test_key)
 
                 elif test_key == StageEnum.WEARING.value:
-                    sample_score, per_target, used_targets = score_ppe_bool_list(samples_by_target, test_key)
+                    sample_score, per_target, used_targets, weight = score_ppe_bool_list(samples_by_target, test_key)
 
                 elif test_key == StageEnum.IMPROPER_WEARING.value:
-                    sample_score, per_target, used_targets = score_ppe_bool_list(samples_by_target, test_key)
+                    sample_score, per_target, used_targets, weight = score_ppe_bool_list(samples_by_target, test_key)
 
                 else:
                     continue
 
-                update_aggregate(global_aggregate, test_key, sample_score)
+                # [수정 2] update_aggregate 호출 시 weight 전달
+                update_aggregate(global_aggregate, test_key, sample_score, weight)
 
                 for target_tag in used_targets:
                     if target_tag in per_target:
-                        update_aggregate(per_target_aggregates[target_tag], test_key, per_target[target_tag])
+                        # [수정 2] update_aggregate 호출 시 weight 전달
+                        update_aggregate(per_target_aggregates[target_tag], test_key, per_target[target_tag], weight)
 
     print("\n[DEBUG] global_aggregate raw totals/counts:")
     for k in config.test_keys:
         v = global_aggregate[k]
-        print(f"  {k:30s} total={v['total']:.6f} count={v['count']}")
+        # [수정 3] total -> weighted_sum, total_weight로 키 변경 확인
+        # init_aggregate에서 정의한 키와 일치해야 함
+        print(f"  {k:30s} w_sum={v['weighted_sum']:.4f} t_weight={v['total_weight']:.4f} count={v['count']}")
 
     print("\n[DEBUG] StageEnum expected values:")
     print([

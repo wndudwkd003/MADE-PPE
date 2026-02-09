@@ -30,22 +30,27 @@ def get_test_targets(
 
 
 def init_aggregate(test_keys: list[str]):
-    return {k: {"total": 0.0, "count": 0} for k in test_keys}
+    # [수정] weighted_sum과 total_weight 필드 추가
+    return {k: {"weighted_sum": 0.0, "total_weight": 0.0, "count": 0} for k in test_keys}
 
 
-def update_aggregate(aggregate: dict, key: str, score: float):
-    aggregate[key]["total"] += float(score)
+def update_aggregate(aggregate: dict, key: str, score: float, weight: float = 1.0):
+    # [수정] 점수에 가중치를 곱해 더하고, 가중치 총합을 누적
+    aggregate[key]["weighted_sum"] += (float(score) * float(weight))
+    aggregate[key]["total_weight"] += float(weight)
     aggregate[key]["count"] += 1
 
 
 def finalize_aggregate(aggregate: dict):
+    # [수정] 가중 평균(weighted_sum / total_weight)으로 계산
     out = {}
     for k, v in aggregate.items():
-        total = v["total"]
-        count = v["count"]
-        out[k] = total / count # if count > 0 else 0.0
-    return out
+        w_sum = v["weighted_sum"]
+        t_weight = v["total_weight"]
 
+        # 가중치 합이 0이면(데이터 없음) 0.0
+        out[k] = w_sum / t_weight if t_weight > 0 else 0.0
+    return out
 
 def get_label_samples(target_paths: list[Path]):
     samples_by_target = {}
@@ -209,13 +214,6 @@ def majority_label_and_count(values: list[str]):
 
 
 def score_work_environment(samples_by_target: dict, key: str):
-    """
-    samples_by_target[target_tag] = sample
-    반환:
-      sample_score: float (0~1)
-      per_target: dict[target_tag] = float (0~1)
-      used_targets: list[str]
-    """
     values = []
     used_targets = []
 
@@ -225,8 +223,9 @@ def score_work_environment(samples_by_target: dict, key: str):
             used_targets.append(target_tag)
 
     n = len(values)
+    # [수정] 데이터 부족 시 가중치 0.0 반환
     if n < 2:
-        return 0.0, {}, []
+        return 0.0, {}, [], 0.0
 
     mode_label, mode_count = majority_label_and_count(values)
 
@@ -239,8 +238,9 @@ def score_work_environment(samples_by_target: dict, key: str):
             per_target[target_tag] = 0.0
 
     sample_score = float(mode_count) / float(n)
-    return sample_score, per_target, used_targets
 
+    # [수정] 가중치 1.0 반환 (단일 분류 문제이므로 가중치 고정)
+    return sample_score, per_target, used_targets, 1.0
 
 def list_to_set(value):
     out = set()
@@ -285,13 +285,7 @@ def f1_against_consensus(pred_set: set, consensus_set: set):
         return 0.0
     return 2.0 * precision * recall / denom
 
-
 def score_set_list(samples_by_target: dict, key: str):
-    """
-    hazards, required_ppe 같은 list[str]에 대해 합의셋(consensus) 기반 F1 평균.
-    반환:
-      sample_score, per_target, used_targets
-    """
     used_targets = []
     sets = []
     target_sets = {}
@@ -304,11 +298,15 @@ def score_set_list(samples_by_target: dict, key: str):
             target_sets[target_tag] = s
 
     n = len(sets)
+    # [수정] 데이터 부족 시 가중치 0.0 반환
     if n < 2:
-        return 0.0, {}, []
+        return 0.0, {}, [], 0.0
 
     threshold = ceil(float(n) / 2.0)
     consensus = build_consensus_set(sets, threshold)
+
+    # [수정] 가중치 계산: 합의된 정답 셋(consensus)의 크기. (0개인 경우 최소 1.0)
+    weight = max(1.0, float(len(consensus)))
 
     per_target = {}
     total = 0.0
@@ -318,8 +316,9 @@ def score_set_list(samples_by_target: dict, key: str):
         total += score
 
     sample_score = total / float(n)
-    return sample_score, per_target, used_targets
 
+    # [수정] 가중치 반환 추가
+    return sample_score, per_target, used_targets, weight
 
 def normalize_ppe_bool_list(value):
     """
@@ -350,7 +349,6 @@ def consensus_bool_for_ppe(maps: list[dict], ppe: str):
 
     return true_count > (len(maps) // 2)
 
-
 def score_ppe_bool_list(samples_by_target: dict, key: str):
     used_targets = []
     maps = []
@@ -364,10 +362,14 @@ def score_ppe_bool_list(samples_by_target: dict, key: str):
             target_maps[target_tag] = m
 
     n = len(maps)
+    # [수정] 데이터 부족 시 가중치 0.0 반환
     if n < 2:
-        return 0.0, {}, []
+        return 0.0, {}, [], 0.0
 
     ppes = ppe_union(maps)
+
+    # [수정] 가중치 계산: 전체 평가 대상 PPE 항목 수 (0개인 경우 최소 1.0)
+    weight = max(1.0, float(len(ppes)))
 
     for m in maps:
         for ppe in ppes:
@@ -384,7 +386,8 @@ def score_ppe_bool_list(samples_by_target: dict, key: str):
         per_target = {}
         for target_tag in used_targets:
             per_target[target_tag] = 1.0
-        return 1.0, per_target, used_targets
+        # [수정] 가중치 반환 추가
+        return 1.0, per_target, used_targets, weight
 
     per_target = {}
     total = 0.0
@@ -400,9 +403,10 @@ def score_ppe_bool_list(samples_by_target: dict, key: str):
         per_target[target_tag] = score
         total += score
 
-
     sample_score = total / float(n)
-    return sample_score, per_target, used_targets
+
+    # [수정] 가중치 반환 추가
+    return sample_score, per_target, used_targets, weight
 
 
 def get_avg(scores: list[float]):

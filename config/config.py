@@ -26,12 +26,12 @@ ROLE_SEQUENCE = [
 @dataclass
 class Config:
     # LABELING or EVALUATION or ANALYSIS
-    do_mode: DoModeEnum = DoModeEnum.LABELING
+    do_mode: DoModeEnum = DoModeEnum.EVALUATION
 
     dataset: DatasetEnum = DatasetEnum.SCP300
     model: ModelEnum = ModelEnum.GPT5_MINI
 
-    agent: AgentEnum = AgentEnum.MADE
+    agent: AgentEnum = AgentEnum.SINGLE_STEP
 
     workers: int = 20
 
