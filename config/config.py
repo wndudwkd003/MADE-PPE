@@ -29,7 +29,7 @@ class Config:
     clustering_k: int = 8          # manual 모드일 때 사용할 클러스터 개수
 
     # LABELING or EVALUATION or ANALYSIS
-    do_mode: DoModeEnum = DoModeEnum.LABELING
+    do_mode: DoModeEnum = DoModeEnum.ANALYSIS
 
     dataset: DatasetEnum = DatasetEnum.SCP300
     model: ModelEnum = ModelEnum.GPT5_MINI
