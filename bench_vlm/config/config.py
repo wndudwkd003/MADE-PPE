@@ -16,17 +16,17 @@ class BenchmarkConfig:
     ROOT: Path = project_root()
     RUNS_DIR: Path = project_root() / "runs"
     DATASETS_DIR: Path = project_root() / "datasets"
-    
+
     OUT_DIR: Path = project_root() / "bench_vlm" / "outputs"
 
-    dataset_name: str = "SH17"
-    label_run_tag: str = "SINGLE_STEP"
-    
+    dataset_name: str = "SCP300"
+    label_run_tag: str = "MADE1"
+
     pretrained_id: str = "Qwen/Qwen2.5-VL-3B-Instruct"
     task_mode: TaskType = TaskType.ALL_5STAGE   # TaskType : SCENE, HAZARD, REQUIRED, WEARING, IMPROPER, ALL_5STAGE
 
     seed: int = 42
-    num_train_epochs: int = 1
+    num_train_epochs: int = 3
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
     gradient_accumulation_steps: int = 8
@@ -38,9 +38,9 @@ class BenchmarkConfig:
     eval_steps: int = 200
 
     max_prompt_tokens: int = 1024
-    max_target_tokens: int = 256
-    generation_max_new_tokens: int = 256
-    
+    max_target_tokens: int = 1024
+    generation_max_new_tokens: int = 1024
+
     image_size: int = 512
 
     use_lora: bool = True
@@ -50,10 +50,10 @@ class BenchmarkConfig:
 
     bf16: bool = True
     fp16: bool = False
-    
+
     max_train_samples: int | None = None
     max_valid_samples: int | None = None
-    
+
 
     @property
     def JSONL_DIR(self) -> Path:

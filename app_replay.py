@@ -23,7 +23,7 @@ AGENT_MAPPING = {
     r"^SINGLE_STEP\d+$": "Single (Multi-Step)"
 }
 
-TARGET_DATASET = "SCP300"
+TARGET_DATASET = "SCP300_a"
 
 # --------------------------------------------------------------------------
 # 1. 데이터 로더 유틸리티
