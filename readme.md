@@ -1,36 +1,37 @@
-# MADE-PPE: Multi-agent Automated Debate for Explainable Labeling and Schema Restructuring
+# MADE-PPE
 
-MADE-PPE builds a regulation-grounded benchmark that links work situations and hazard factors to required PPE, then evaluates wearing and improper-wearing for compliance assessment.
-It uses a multi-agent pipeline (proposer–rebutter–judge) to produce structured labels and iteratively refine the schema via aggregation and statistical re-structuring.
+MADE-PPE structures work situations and hazard factors based on PPE regulations, then uses multi-agent debate (proposer–rebutter–judge) to generate and refine labels so that explainable labeling and schema restructuring are possible. The project builds a regulation-grounded benchmark for PPE wearing and improper-wearing, along with a VLM evaluation pipeline.
 
-## Figures
+Components
+- `run.py`: main entry point (labeling/evaluation/analysis)
+- `config/`: shared configuration and API key file
+- `params/`: prompts, schema, enums, and parameter definitions
+- `worker/`: labeling/evaluation/analysis execution logic
+- `datasets/`: input datasets
+- `runs/`, `runs_eval/`: run outputs and evaluation artifacts
+- `bench_vlm/`: VLM benchmark data build/train/eval scripts
+- `app_replay.py`: labeling log replay (Streamlit)
+- `scripts/`: data/analysis utilities
 
-### Fig. 1. MADE-PPE multi-agent labeling workflow
-![Fig. 1. MADE-PPE multi-agent labeling workflow](.git_information/fig_1.jpg)
-
-**Description.** Given an input sample, agents (Proposer–Rebutter–Judge) sequentially infer **work situation → hazard factors → compliance**, and then estimate **wearing** and **improper-wearing**. The final output is stored as a structured record, and optional schema-update proposals are aggregated for refinement.
-
-### Fig. 2. End-to-end research pipeline
-![Fig. 2. End-to-end research pipeline](.git_information/fig_2.jpg)
-
-**Description.** Starting from PPE datasets, the pipeline defines a **regulation-based pre-structure (work environment–hazards–PPE)**, performs **multi-agent labeling**, conducts **statistical re-structuring**, and finally runs **benchmark tests** (e.g., SOTA VLM-based evaluation).
-
-## Run
-
+How to run
+1. Main pipeline
 ```bash
-python -m run
+python run.py
 ```
 
-## Benchmark run
-
+2. VLM benchmark pipeline
 ```bash
-python -m build_train_jsonl
+python bench_vlm/build_train_jsonl.py
+python bench_vlm/train_vlm.py
+python bench_vlm/eval_vlm.py
 ```
 
+3. Log replay (optional)
 ```bash
-python -m train_vlm
+streamlit run app_replay.py
 ```
 
-```bash
-python -m eval_vlm
-```
+Config locations
+- `config/config.py`: shared runtime settings (mode, dataset, model, etc.)
+- `config/api_keys.json`: API key file path
+- `bench_vlm/config/config.py`: VLM benchmark configuration
